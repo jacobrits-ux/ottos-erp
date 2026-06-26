@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Client Portal DEMO — Otto's Renovation & Beautification</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&family=Cormorant+Garamond:wght@400;600&display=swap');
+:root{
+  --bg:#1a1608;--surface:#221d09;--surface2:#2d2710;--border:#3d3612;
+  --accent:#d4a843;--green:#4caf7d;--red:#e05252;--blue:#4a9fd4;
+  --text:#f5edcc;--text2:#b8a878;--text3:#6b5e30;
+  --fd:'Bebas Neue',sans-serif;--fm:'IBM Plex Mono',monospace;--fb:'IBM Plex Sans',sans-serif;--fs:'Cormorant Garamond',serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:var(--fb);font-size:14px;min-height:100vh;}
+.demo-bar{background:#9b72cf;padding:8px 16px;text-align:center;font-family:var(--fm);font-size:11px;letter-spacing:1px;color:#fff;position:sticky;top:0;z-index:200;}
+.header{background:var(--surface);border-bottom:1px solid var(--border);border-top:2px solid var(--accent);padding:14px 18px;position:sticky;top:30px;z-index:100;}
+.header-inner{display:flex;align-items:center;gap:10px;max-width:760px;margin:0 auto;}
+.brand{line-height:1.15;flex:1;}
+.brand-name{font-family:var(--fs);font-size:18px;font-weight:600;color:var(--accent);}
+.brand-sub{font-family:var(--fm);font-size:8px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;}
+.client-pill{background:var(--surface2);border:1px solid var(--border);padding:6px 12px;font-family:var(--fm);font-size:11px;color:var(--text2);white-space:nowrap;}
+.tabs{display:flex;max-width:760px;margin:0 auto;border-bottom:1px solid var(--border);background:var(--surface);position:sticky;top:92px;z-index:99;}
+.tab{flex:1;text-align:center;padding:12px 6px;font-family:var(--fm);font-size:10px;letter-spacing:1px;color:var(--text3);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;text-transform:uppercase;}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent);}
+.tab .tc{display:inline-block;margin-left:4px;background:var(--surface2);border-radius:8px;padding:0 5px;font-size:9px;color:var(--text2);}
+.wrap{max-width:760px;margin:0 auto;padding:18px 14px 60px;}
+.tabpanel{display:none;}.tabpanel.active{display:block;}
+.card{background:var(--surface);border:1px solid var(--border);margin-bottom:12px;overflow:hidden;}
+.card-head{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
+.card-title{font-size:15px;font-weight:600;color:var(--text);}
+.card-id{font-family:var(--fm);font-size:10px;color:var(--text3);margin-top:2px;}
+.card-body{padding:12px 16px;}
+.badge{display:inline-block;font-family:var(--fm);font-size:9px;letter-spacing:1px;text-transform:uppercase;padding:3px 8px;border-radius:2px;white-space:nowrap;}
+.badge-green{background:rgba(76,175,125,.15);color:var(--green);border:1px solid rgba(76,175,125,.3);}
+.badge-red{background:rgba(224,82,82,.15);color:var(--red);border:1px solid rgba(224,82,82,.3);}
+.badge-gold{background:rgba(212,168,67,.15);color:var(--accent);border:1px solid rgba(212,168,67,.3);}
+.badge-blue{background:rgba(74,159,212,.15);color:var(--blue);border:1px solid rgba(74,159,212,.3);}
+.progress-bar{height:6px;background:var(--surface2);border-radius:3px;overflow:hidden;margin-top:8px;}
+.progress-fill{height:100%;background:var(--accent);border-radius:3px;}
+.row{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--text2);margin-top:6px;}
+.row .v{font-family:var(--fm);color:var(--text);}
+.lines-table{width:100%;border-collapse:collapse;margin-top:10px;}
+.lines-table th{font-family:var(--fm);font-size:8px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);padding:6px 8px;text-align:left;border-bottom:1px solid var(--border);}
+.lines-table td{padding:7px 8px;border-bottom:1px solid var(--border);font-size:12px;}
+.lines-table tr:last-child td{border-bottom:none;}
+.lines-table .num{text-align:right;font-family:var(--fm);}
+.total-line{display:flex;justify-content:space-between;padding:8px 16px;border-top:1px solid var(--border);background:var(--surface2);}
+.total-line.grand{font-weight:700;}
+.total-line .amt{font-family:var(--fm);color:var(--accent);}
+.actions{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border);}
+.btn{flex:1;border:none;padding:11px;font-family:var(--fd);font-size:17px;letter-spacing:1px;cursor:pointer;transition:opacity .15s;}
+.btn:active{opacity:.8;}
+.btn-approve{background:var(--green);color:#0c1a10;}
+.btn-decline{background:transparent;border:1px solid var(--red);color:var(--red);}
+.btn-pdf{background:var(--surface2);border:1px solid var(--border);color:var(--text2);font-family:var(--fm);font-size:11px;letter-spacing:1px;padding:9px 12px;cursor:pointer;display:block;width:calc(100% - 32px);margin:0 16px 12px;text-align:center;}
+.btn-pdf:hover{border-color:var(--accent);color:var(--accent);}
+.decided-note{padding:10px 16px;font-family:var(--fm);font-size:10px;letter-spacing:1px;border-top:1px solid var(--border);}
+.footer{max-width:760px;margin:0 auto;padding:20px 14px 40px;border-top:1px solid var(--border);text-align:center;}
+.footer-text{font-family:var(--fm);font-size:10px;color:var(--text3);line-height:2;}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--surface2);border:1px solid var(--green);color:var(--green);padding:10px 20px;font-family:var(--fm);font-size:11px;letter-spacing:1px;z-index:2000;opacity:0;transition:all .3s;pointer-events:none;white-space:nowrap;}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+</style>
+</head>
+<body>
+
+<div class="demo-bar">◈ DEMO PREVIEW — this is exactly what your client sees when they open their portal link</div>
+
+<div class="header">
+  <div class="header-inner">
+    <svg width="26" height="20" viewBox="0 0 56 44" fill="none">
+      <rect x="2" y="22" width="8" height="20" fill="none" stroke="#d4a843" stroke-width="2.5"/>
+      <rect x="13" y="12" width="8" height="30" fill="none" stroke="#d4a843" stroke-width="2.5"/>
+      <rect x="24" y="2" width="8" height="40" fill="none" stroke="#d4a843" stroke-width="2.5"/>
+      <rect x="35" y="14" width="8" height="28" fill="none" stroke="#d4a843" stroke-width="2.5"/>
+      <rect x="46" y="20" width="8" height="22" fill="none" stroke="#d4a843" stroke-width="2.5"/>
+    </svg>
+    <div class="brand">
+      <div class="brand-name">Otto's Client Portal</div>
+      <div class="brand-sub">Renovation &amp; Beautification</div>
+    </div>
+    <div class="client-pill">Mrs S. van der Berg</div>
+  </div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" id="tab-projects" onclick="switchTab('projects')">Projects <span class="tc">2</span></div>
+  <div class="tab" id="tab-quotes" onclick="switchTab('quotes')">Quotes <span class="tc">2</span></div>
+  <div class="tab" id="tab-invoices" onclick="switchTab('invoices')">Invoices <span class="tc">2</span></div>
+</div>
+
+<div class="wrap">
+
+  <!-- PROJECTS -->
+  <div class="tabpanel active" id="panel-projects">
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">Kitchen Renovation — Mooikloof Ridge</div><div class="card-id">PRJ-001 · Renovation</div></div>
+        <span class="badge badge-blue">Active</span>
+      </div>
+      <div class="card-body">
+        <div style="font-size:12px;color:var(--text2);margin-bottom:8px;line-height:1.6;">Full kitchen strip-out and refit including new cabinetry, countertops, tiling, plumbing and electrical.</div>
+        <div class="row"><span>Progress</span><span class="v">65%</span></div>
+        <div class="progress-bar"><div class="progress-fill" style="width:65%"></div></div>
+        <div class="row"><span>Target Completion</span><span class="v">15/07/26</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">Boundary Wall — Front of Property</div><div class="card-id">PRJ-002 · Brickwork</div></div>
+        <span class="badge badge-gold">Pending</span>
+      </div>
+      <div class="card-body">
+        <div style="font-size:12px;color:var(--text2);margin-bottom:8px;line-height:1.6;">1.8m high facebrick boundary wall, 32 linear metres, with plastered coping on top.</div>
+        <div class="row"><span>Progress</span><span class="v">0%</span></div>
+        <div class="progress-bar"><div class="progress-fill" style="width:0%"></div></div>
+        <div class="row"><span>Target Completion</span><span class="v">30/08/26</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- QUOTES -->
+  <div class="tabpanel" id="panel-quotes">
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">Kitchen Renovation — Mooikloof Ridge</div><div class="card-id">QUO-2026-001 · v2 · Valid until 30/07/26</div></div>
+        <span class="badge badge-green" id="badge-q1">Approved</span>
+      </div>
+      <div class="card-body">
+        <table class="lines-table">
+          <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Amount</th></tr></thead>
+          <tbody>
+            <tr><td>Strip-out and disposal of existing kitchen</td><td class="num">1</td><td class="num">Job</td><td class="num">R 4,500</td></tr>
+            <tr><td>Custom melamine cabinetry — base and wall units</td><td class="num">1</td><td class="num">Job</td><td class="num">R 38,000</td></tr>
+            <tr><td>Caesar stone countertop supply and install</td><td class="num">4.2</td><td class="num">m²</td><td class="num">R 18,900</td></tr>
+            <tr><td>Floor tiling — 600×600 porcelain</td><td class="num">22</td><td class="num">m²</td><td class="num">R 9,900</td></tr>
+            <tr><td>Plumbing — new sink, dishwasher point, geyser</td><td class="num">1</td><td class="num">Job</td><td class="num">R 7,200</td></tr>
+            <tr><td>Electrical — new board circuit and LED downlights</td><td class="num">1</td><td class="num">Job</td><td class="num">R 6,800</td></tr>
+            <tr><td>Labour — all trades, 14 working days</td><td class="num">1</td><td class="num">Job</td><td class="num">R 22,400</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="total-line"><span>Subtotal</span><span class="amt">R 107,700</span></div>
+      <div class="total-line"><span>Contingency (10%)</span><span class="amt">R 10,770</span></div>
+      <div class="total-line grand"><span>TOTAL</span><span class="amt">R 118,470</span></div>
+      <button class="btn-pdf" onclick="showToast('PDF opens in a new tab in the live version')">⬇ VIEW / PRINT PDF</button>
+      <div class="decided-note" style="color:var(--green)">✓ You approved this quote</div>
+    </div>
+
+    <div class="card" id="card-q2">
+      <div class="card-head">
+        <div><div class="card-title">Boundary Wall — Front of Property</div><div class="card-id">QUO-2026-002 · v1 · Valid until 31/07/26</div></div>
+        <span class="badge badge-gold" id="badge-q2">Pending</span>
+      </div>
+      <div class="card-body">
+        <table class="lines-table">
+          <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Amount</th></tr></thead>
+          <tbody>
+            <tr><td>Facebrick boundary wall — 1.8m high</td><td class="num">32</td><td class="num">lin m</td><td class="num">R 38,400</td></tr>
+            <tr><td>Plastered coping on top of wall</td><td class="num">32</td><td class="num">lin m</td><td class="num">R 5,120</td></tr>
+            <tr><td>Prepared gate opening with lintel</td><td class="num">1</td><td class="num">Job</td><td class="num">R 3,200</td></tr>
+            <tr><td>Labour — bricklayer and assistant, 8 days</td><td class="num">1</td><td class="num">Job</td><td class="num">R 9,600</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="total-line"><span>Subtotal</span><span class="amt">R 56,320</span></div>
+      <div class="total-line"><span>Contingency (10%)</span><span class="amt">R 5,632</span></div>
+      <div class="total-line grand"><span>TOTAL</span><span class="amt">R 61,952</span></div>
+      <button class="btn-pdf" onclick="showToast('PDF opens in a new tab in the live version')">⬇ VIEW / PRINT PDF</button>
+      <div class="actions" id="actions-q2">
+        <button class="btn btn-approve" onclick="decideQuote('approve')">✓ APPROVE</button>
+        <button class="btn btn-decline" onclick="decideQuote('decline')">✕ DECLINE</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- INVOICES -->
+  <div class="tabpanel" id="panel-invoices">
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">INV-2026-001</div><div class="card-id">Issued 01/06/26 · Due 08/06/26</div></div>
+        <span class="badge badge-green">Paid</span>
+      </div>
+      <div class="card-body">
+        <table class="lines-table">
+          <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Amount</th></tr></thead>
+          <tbody><tr><td>Deposit — Kitchen Renovation (50%)</td><td class="num">1</td><td class="num">Job</td><td class="num">R 59,235</td></tr></tbody>
+        </table>
+      </div>
+      <div class="total-line grand"><span>TOTAL</span><span class="amt">R 59,235</span></div>
+      <button class="btn-pdf" onclick="showToast('PDF opens in a new tab in the live version')">⬇ VIEW / PRINT PDF</button>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">INV-2026-002</div><div class="card-id">Issued 20/06/26 · Due 27/06/26</div></div>
+        <span class="badge badge-gold">Sent</span>
+      </div>
+      <div class="card-body">
+        <table class="lines-table">
+          <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Amount</th></tr></thead>
+          <tbody><tr><td>Progress claim — cabinetry complete milestone</td><td class="num">1</td><td class="num">Job</td><td class="num">R 35,541</td></tr></tbody>
+        </table>
+      </div>
+      <div class="total-line grand"><span>TOTAL</span><span class="amt">R 35,541</span></div>
+      <button class="btn-pdf" onclick="showToast('PDF opens in a new tab in the live version')">⬇ VIEW / PRINT PDF</button>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">
+  <div class="footer-text">
+    Otto's Renovation &amp; Beautification<br>
+    Heino v Niekerk · 062 274 9921 &nbsp;|&nbsp; Jaco Brits · 072 470 6471<br>
+    This is your personal portal link — please don't share it.
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.id === 'tab-' + name));
+  document.querySelectorAll('.tabpanel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+}
+
+function decideQuote(action) {
+  const label = action === 'approve' ? 'approve' : 'decline';
+  if (!confirm('Are you sure you want to ' + label + ' this quote?\nOtto\'s will be notified immediately.')) return;
+
+  const badge   = document.getElementById('badge-q2');
+  const actions = document.getElementById('actions-q2');
+
+  if (action === 'approve') {
+    badge.className = 'badge badge-green';
+    badge.textContent = 'Approved';
+    actions.innerHTML = '<div style="padding:8px 0;font-family:var(--fm);font-size:10px;letter-spacing:1px;color:var(--green)">✓ You approved this quote — Otto\'s has been notified</div>';
+    actions.style.borderTop = '1px solid var(--border)';
+    showToast('✓ Quote approved — thank you!');
+  } else {
+    badge.className = 'badge badge-red';
+    badge.textContent = 'Declined';
+    actions.innerHTML = '<div style="padding:8px 0;font-family:var(--fm);font-size:10px;letter-spacing:1px;color:var(--red)">✕ You declined this quote — Otto\'s has been notified</div>';
+    actions.style.borderTop = '1px solid var(--border)';
+    showToast('Quote declined — Otto\'s has been notified');
+  }
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2800);
+}
+</script>
+</body>
+</html>
