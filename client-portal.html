@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Client Portal — Otto's Renovation &amp; Beautification</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&family=Cormorant+Garamond:wght@400;600&display=swap');
+:root{
+  --bg:#1a1608;--surface:#221d09;--surface2:#2d2710;--border:#3d3612;
+  --accent:#d4a843;--accent-light:#f0cc6a;
+  --green:#4caf7d;--red:#e05252;--blue:#4a9fd4;--purple:#9b72cf;
+  --text:#f5edcc;--text2:#b8a878;--text3:#6b5e30;
+  --fd:'Bebas Neue',sans-serif;--fm:'IBM Plex Mono',monospace;--fb:'IBM Plex Sans',sans-serif;--fs:'Cormorant Garamond',serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:var(--fb);font-size:14px;min-height:100vh;}
+.header{background:var(--surface);border-bottom:1px solid var(--border);border-top:2px solid var(--accent);padding:14px 18px;position:sticky;top:0;z-index:100;}
+.header-inner{display:flex;align-items:center;gap:10px;max-width:760px;margin:0 auto;}
+.brand{line-height:1.15;flex:1;min-width:0;}
+.brand-name{font-family:var(--fs);font-size:18px;font-weight:600;color:var(--accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.brand-sub{font-family:var(--fm);font-size:8px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;}
+.client-pill{background:var(--surface2);border:1px solid var(--border);padding:6px 12px;font-family:var(--fm);font-size:11px;color:var(--text2);white-space:nowrap;}
+
+.tabs{display:flex;max-width:760px;margin:0 auto;border-bottom:1px solid var(--border);background:var(--surface);position:sticky;top:62px;z-index:99;}
+.tab{flex:1;text-align:center;padding:12px 6px;font-family:var(--fm);font-size:10px;letter-spacing:1px;color:var(--text3);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;text-transform:uppercase;}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent);}
+.tab .tcount{display:inline-block;margin-left:4px;background:var(--surface2);border-radius:8px;padding:0 5px;font-size:9px;color:var(--text2);}
+
+.wrap{max-width:760px;margin:0 auto;padding:18px 14px 60px;}
+.tabpanel{display:none;}
+.tabpanel.active{display:block;}
+
+.empty{text-align:center;padding:48px 20px;color:var(--text3);}
+.empty-icon{font-size:34px;margin-bottom:10px;}
+.empty-title{font-family:var(--fd);font-size:20px;letter-spacing:2px;margin-bottom:6px;}
+.empty-sub{font-family:var(--fm);font-size:11px;line-height:1.8;}
+
+.card{background:var(--surface);border:1px solid var(--border);margin-bottom:12px;overflow:hidden;}
+.card-head{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
+.card-title{font-size:15px;font-weight:600;color:var(--text);}
+.card-id{font-family:var(--fm);font-size:10px;color:var(--text3);margin-top:2px;}
+.card-body{padding:12px 16px;}
+
+.badge{display:inline-block;font-family:var(--fm);font-size:9px;letter-spacing:1px;text-transform:uppercase;padding:3px 8px;border-radius:2px;white-space:nowrap;}
+.badge-green{background:rgba(76,175,125,.15);color:var(--green);border:1px solid rgba(76,175,125,.3);}
+.badge-red{background:rgba(224,82,82,.15);color:var(--red);border:1px solid rgba(224,82,82,.3);}
+.badge-gold{background:rgba(212,168,67,.15);color:var(--accent);border:1px solid rgba(212,168,67,.3);}
+.badge-blue{background:rgba(74,159,212,.15);color:var(--blue);border:1px solid rgba(74,159,212,.3);}
+.badge-gray{background:rgba(90,86,80,.3);color:var(--text3);border:1px solid var(--border);}
+
+.progress-bar{height:6px;background:var(--surface2);border-radius:3px;overflow:hidden;margin-top:8px;}
+.progress-fill{height:100%;background:var(--accent);border-radius:3px;transition:width .4s ease;}
+.row{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--text2);margin-top:6px;}
+.row .v{font-family:var(--fm);color:var(--text);}
+
+.lines-table{width:100%;border-collapse:collapse;margin-top:10px;}
+.lines-table th{font-family:var(--fm);font-size:8px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);padding:6px 8px;text-align:left;border-bottom:1px solid var(--border);}
+.lines-table td{padding:7px 8px;border-bottom:1px solid var(--border);font-size:12px;}
+.lines-table tr:last-child td{border-bottom:none;}
+.lines-table .num{text-align:right;font-family:var(--fm);}
+
+.total-line{display:flex;justify-content:space-between;padding:8px 16px;border-top:1px solid var(--border);background:var(--surface2);}
+.total-line.grand{font-weight:700;}
+.total-line .amt{font-family:var(--fm);color:var(--accent);}
+
+.actions{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border);}
+.btn{flex:1;border:none;padding:11px;font-family:var(--fd);font-size:17px;letter-spacing:1px;cursor:pointer;transition:opacity .15s;}
+.btn:active{opacity:.8;}
+.btn-approve{background:var(--green);color:#0c1a10;}
+.btn-decline{background:transparent;border:1px solid var(--red);color:var(--red);}
+.btn-pdf{background:var(--surface2);border:1px solid var(--border);color:var(--text2);font-family:var(--fm);font-size:11px;letter-spacing:1px;padding:9px;flex:1;cursor:pointer;}
+.btn-pdf:hover{border-color:var(--accent);color:var(--accent);}
+.decided-note{padding:10px 16px;font-family:var(--fm);font-size:10px;letter-spacing:1px;border-top:1px solid var(--border);}
+
+.screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;text-align:center;padding:24px;}
+.screen-icon{font-size:44px;color:var(--text3);margin-bottom:16px;}
+.screen-title{font-family:var(--fd);font-size:26px;letter-spacing:2px;color:var(--text2);margin-bottom:10px;}
+.screen-sub{font-family:var(--fm);font-size:11px;color:var(--text3);line-height:1.9;max-width:340px;}
+
+.footer{max-width:760px;margin:0 auto;padding:20px 14px 40px;border-top:1px solid var(--border);text-align:center;}
+.footer-text{font-family:var(--fm);font-size:10px;color:var(--text3);line-height:2;}
+
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--surface2);border:1px solid var(--green);color:var(--green);padding:10px 20px;font-family:var(--fm);font-size:11px;letter-spacing:1px;z-index:2000;opacity:0;transition:all .3s;pointer-events:none;white-space:nowrap;}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+@keyframes spin{to{transform:rotate(360deg);}}
+.spinner{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin-bottom:16px;}
+</style>
+</head>
+<body>
+
+<div id="screen-loading" class="screen">
+  <div class="spinner"></div>
+  <div class="screen-title">LOADING PORTAL</div>
+  <div class="screen-sub">Fetching your project details…</div>
+</div>
+
+<div id="screen-invalid" class="screen" style="display:none">
+  <div class="screen-icon">⚠</div>
+  <div class="screen-title">LINK NOT VALID</div>
+  <div class="screen-sub">This portal link is invalid, expired, or has not been set up yet.<br><br>Please contact Otto's Renovation &amp; Beautification directly:<br><br>Heino: 062 274 9921<br>Jaco: 072 470 6471</div>
+</div>
+
+<div id="portal-app" style="display:none">
+  <div class="header">
+    <div class="header-inner">
+      <svg width="26" height="20" viewBox="0 0 56 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="2" y="22" width="8" height="20" fill="none" stroke="#d4a843" stroke-width="2.5"/>
+        <rect x="13" y="12" width="8" height="30" fill="none" stroke="#d4a843" stroke-width="2.5"/>
+        <rect x="24" y="2" width="8" height="40" fill="none" stroke="#d4a843" stroke-width="2.5"/>
+        <rect x="35" y="14" width="8" height="28" fill="none" stroke="#d4a843" stroke-width="2.5"/>
+        <rect x="46" y="20" width="8" height="22" fill="none" stroke="#d4a843" stroke-width="2.5"/>
+      </svg>
+      <div class="brand">
+        <div class="brand-name">Otto's Client Portal</div>
+        <div class="brand-sub">Renovation &amp; Beautification</div>
+      </div>
+      <div class="client-pill" id="client-name-pill">—</div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="projects" onclick="switchTab('projects')">Projects <span class="tcount" id="count-projects">0</span></div>
+    <div class="tab" data-tab="quotes" onclick="switchTab('quotes')">Quotes <span class="tcount" id="count-quotes">0</span></div>
+    <div class="tab" data-tab="invoices" onclick="switchTab('invoices')">Invoices <span class="tcount" id="count-invoices">0</span></div>
+  </div>
+
+  <div class="wrap">
+    <div class="tabpanel active" id="panel-projects"></div>
+    <div class="tabpanel" id="panel-quotes"></div>
+    <div class="tabpanel" id="panel-invoices"></div>
+  </div>
+
+  <div class="footer">
+    <div class="footer-text">
+      Otto's Renovation &amp; Beautification<br>
+      Heino v Niekerk · 062 274 9921 &nbsp;|&nbsp; Jaco Brits · 072 470 6471<br>
+      This is your personal portal link — please don't share it.
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── COMPANY (mirrors construction-erp.html COMPANY const — client-facing only) ──
+const COMPANY = {
+  name: "Otto's Renovation & Beautification",
+  tagline: "Building Dreams, Beautifying Spaces",
+  address: "31 Augrabies Ave, Mooikloof Ridge Estate, Pretoria",
+  bank: "Capitec Bank · Account: 1053733674",
+  paymentTerms: "Payment is due within 7 days of invoice date. Please use the invoice number as your payment reference. EFT payments only — no cash accepted on site.",
+  quoteTerms: "This quotation is valid until {VALID_DATE} ({VALID_DAYS} days from date of issue). Company is not VAT registered — no VAT applicable. Final pricing subject to site inspection and confirmation of scope.",
+};
+
+const params = new URLSearchParams(location.search);
+const TOKEN  = params.get('token');
+const PID    = params.get('pid');
+
+function fsBase() { return `https://firestore.googleapis.com/v1/projects/${PID}/databases/(default)/documents`; }
+
+const fmt = n => 'R' + Number(n||0).toLocaleString('en-ZA', {minimumFractionDigits:0});
+const dt  = d => { if(!d) return '-'; const p=d.split('-'); return p.length===3 ? `${p[2]}/${p[1]}/${p[0].slice(2)}` : d; };
+
+let portalData = null;     // { clientName, clientType, projects[], quotes[], invoices[] }
+let portalActions = {};    // { quoteId: {action, at} } — local + remote merged
+
+function toast(msg) { const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2800); }
+
+function showInvalid() {
+  document.getElementById('screen-loading').style.display = 'none';
+  document.getElementById('screen-invalid').style.display = 'flex';
+}
+
+async function loadPortal() {
+  if (!TOKEN || !PID) { showInvalid(); return; }
+  try {
+    const res = await fetch(`${fsBase()}/clientPortal/${TOKEN}`);
+    if (!res.ok) { showInvalid(); return; }
+    const doc = await res.json();
+    const dataStr = doc.fields && doc.fields.data && doc.fields.data.stringValue;
+    if (!dataStr) { showInvalid(); return; }
+    portalData = JSON.parse(dataStr);
+    const actionsStr = doc.fields && doc.fields.actions && doc.fields.actions.stringValue;
+    portalActions = actionsStr ? JSON.parse(actionsStr) : {};
+    renderAll();
+    document.getElementById('screen-loading').style.display = 'none';
+    document.getElementById('portal-app').style.display = 'block';
+  } catch (e) {
+    console.error('Portal load error:', e);
+    showInvalid();
+  }
+}
+
+async function writeAction(quoteId, action) {
+  portalActions[quoteId] = { action, at: new Date().toISOString() };
+  try {
+    await fetch(`${fsBase()}/clientPortal/${TOKEN}?updateMask.fieldPaths=actions`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: { actions: { stringValue: JSON.stringify(portalActions) } } })
+    });
+  } catch (e) { console.warn('Action write failed:', e); }
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tabpanel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+}
+
+function statusBadge(status, kind) {
+  const map = {
+    active:'badge-blue', completed:'badge-green', 'on-hold':'badge-gray',
+    pending:'badge-gold', approved:'badge-green', declined:'badge-red', expired:'badge-gray',
+    draft:'badge-gray', sent:'badge-gold', paid:'badge-green', overdue:'badge-red',
+  };
+  return `<span class="badge ${map[status]||'badge-gray'}">${status}</span>`;
+}
+
+function renderAll() {
+  document.getElementById('client-name-pill').textContent = portalData.clientName || 'Client';
+  document.title = `Client Portal — ${portalData.clientName || ''}`;
+  renderProjects();
+  renderQuotes();
+  renderInvoices();
+}
+
+// ── PROJECTS ──
+function renderProjects() {
+  const list = portalData.projects || [];
+  document.getElementById('count-projects').textContent = list.length;
+  const el = document.getElementById('panel-projects');
+  if (list.length === 0) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">⬡</div><div class="empty-title">NO PROJECTS YET</div><div class="empty-sub">Your projects will appear here once work begins.</div></div>`;
+    return;
+  }
+  el.innerHTML = list.map(p => `
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">${p.name}</div><div class="card-id">${p.id} · ${p.type||''}</div></div>
+        ${statusBadge(p.status)}
+      </div>
+      <div class="card-body">
+        ${p.desc ? `<div style="font-size:12px;color:var(--text2);margin-bottom:8px;line-height:1.6;">${p.desc}</div>` : ''}
+        <div class="row"><span>Progress</span><span class="v">${p.progress||0}%</span></div>
+        <div class="progress-bar"><div class="progress-fill" style="width:${p.progress||0}%"></div></div>
+        ${p.deadline ? `<div class="row"><span>Target Completion</span><span class="v">${dt(p.deadline)}</span></div>` : ''}
+      </div>
+    </div>`).join('');
+}
+
+// ── QUOTES ──
+function renderQuotes() {
+  const list = portalData.quotes || [];
+  document.getElementById('count-quotes').textContent = list.length;
+  const el = document.getElementById('panel-quotes');
+  if (list.length === 0) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">◷</div><div class="empty-title">NO QUOTES YET</div><div class="empty-sub">Quotations will appear here for your review and approval.</div></div>`;
+    return;
+  }
+  el.innerHTML = list.map(q => {
+    const lineRows = (q.lines||[]).map(l => `
+      <tr><td>${l.desc||'—'}</td><td class="num">${l.qty}</td><td class="num">${l.unit||''}</td><td class="num">${fmt(l.lineTotal)}</td></tr>`).join('');
+    const canDecide = q.status === 'pending';
+    let actionsHtml = '';
+    if (canDecide) {
+      actionsHtml = `<div class="actions">
+        <button class="btn btn-approve" onclick="decideQuote('${q.id}','approved')">✓ APPROVE</button>
+        <button class="btn btn-decline" onclick="decideQuote('${q.id}','declined')">✕ DECLINE</button>
+      </div>`;
+    } else {
+      const txt = q.status === 'approved' ? '✓ You approved this quote' : q.status === 'declined' ? '✕ You declined this quote' : `Status: ${q.status}`;
+      const col = q.status === 'approved' ? 'var(--green)' : q.status === 'declined' ? 'var(--red)' : 'var(--text3)';
+      actionsHtml = `<div class="decided-note" style="color:${col}">${txt}</div>`;
+    }
+    return `
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">${q.desc||q.id}</div><div class="card-id">${q.id} · v${q.version||1} · Valid until ${dt(q.valid)}</div></div>
+        ${statusBadge(q.status)}
+      </div>
+      <div class="card-body">
+        <table class="lines-table">
+          <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Amount</th></tr></thead>
+          <tbody>${lineRows}</tbody>
+        </table>
+      </div>
+      <div class="total-line"><span>Subtotal</span><span class="amt">${fmt(q.amount - (q.contingency||0))}</span></div>
+      ${q.contingency ? `<div class="total-line"><span>Contingency (${q.contingencyPct||0}%)</span><span class="amt">${fmt(q.contingency)}</span></div>` : ''}
+      <div class="total-line grand"><span>TOTAL</span><span class="amt">${fmt(q.amount)}</span></div>
+      <div style="display:flex;gap:8px;padding:0 16px 12px;">
+        <button class="btn-pdf" onclick='viewDoc("quote", ${JSON.stringify(q).replace(/'/g,"&#39;")})'>⬇ VIEW / PRINT PDF</button>
+      </div>
+      ${actionsHtml}
+    </div>`;
+  }).join('');
+}
+
+async function decideQuote(quoteId, action) {
+  const label = action === 'approved' ? 'approve' : 'decline';
+  if (!confirm(`Are you sure you want to ${label} this quote? Otto's will be notified immediately.`)) return;
+  await writeAction(quoteId, action);
+  const q = portalData.quotes.find(x => x.id === quoteId);
+  if (q) q.status = action;
+  renderQuotes();
+  toast(action === 'approved' ? '✓ Quote approved — thank you!' : 'Quote declined — Otto\'s has been notified');
+}
+
+// ── INVOICES ──
+function renderInvoices() {
+  const list = portalData.invoices || [];
+  document.getElementById('count-invoices').textContent = list.length;
+  const el = document.getElementById('panel-invoices');
+  if (list.length === 0) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">◻</div><div class="empty-title">NO INVOICES YET</div><div class="empty-sub">Invoices will appear here once issued.</div></div>`;
+    return;
+  }
+  el.innerHTML = list.map(inv => {
+    const lineRows = (inv.lines||[]).map(l => `
+      <tr><td>${l.desc||'—'}</td><td class="num">${l.qty}</td><td class="num">${l.unit||''}</td><td class="num">${fmt(l.lineTotal)}</td></tr>`).join('');
+    return `
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">${inv.id}</div><div class="card-id">Issued ${dt(inv.issued)} · Due ${dt(inv.due)}</div></div>
+        ${statusBadge(inv.status)}
+      </div>
+      <div class="card-body">
+        <table class="lines-table">
+          <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Amount</th></tr></thead>
+          <tbody>${lineRows}</tbody>
+        </table>
+      </div>
+      <div class="total-line grand"><span>TOTAL</span><span class="amt">${fmt(inv.amount)}</span></div>
+      <div style="display:flex;gap:8px;padding:0 16px 12px;">
+        <button class="btn-pdf" onclick='viewDoc("invoice", ${JSON.stringify(inv).replace(/'/g,"&#39;")})'>⬇ VIEW / PRINT PDF</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── PDF VIEW (client-safe — no cost/markup columns) ──
+function viewDoc(type, item) {
+  const isInv = type === 'invoice';
+  const docTitle = isInv ? 'TAX INVOICE' : 'QUOTATION';
+  const statusColor = item.status === 'paid' ? '#4caf7d' : item.status === 'overdue' ? '#e05252' : '#d4a843';
+  const lines = item.lines && item.lines.length ? item.lines : [{ desc: item.desc || 'Services rendered', qty:1, unit:'Job', lineTotal:item.amount }];
+  const lineRows = lines.map(l => `
+    <tr>
+      <td style="padding:9px 12px;border-bottom:1px solid #e8d89a;font-size:13px;">${l.desc||'—'}</td>
+      <td style="padding:9px 12px;border-bottom:1px solid #e8d89a;text-align:center;font-size:13px;">${l.qty}</td>
+      <td style="padding:9px 12px;border-bottom:1px solid #e8d89a;text-align:center;font-size:13px;">${l.unit||''}</td>
+      <td style="padding:9px 12px;border-bottom:1px solid #e8d89a;text-align:right;font-family:monospace;font-size:13px;font-weight:600;">R ${(l.lineTotal||0).toLocaleString('en-ZA',{minimumFractionDigits:2})}</td>
+    </tr>`).join('');
+  const subtotal = item.amount - (item.contingency||0);
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${docTitle} ${item.id}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap" rel="stylesheet">
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;} body{font-family:'IBM Plex Sans',sans-serif;font-size:13px;color:#1a1200;background:#fff;}
+    @page{size:A4;margin:14mm;} @media print{.no-print{display:none!important;}}
+    .page{max-width:800px;margin:0 auto;padding:32px 36px;}
+    .doc-header{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:20px;border-bottom:3px solid #d4a843;margin-bottom:24px;}
+    .brand-name{font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:600;color:#b8822a;}
+    .brand-tagline{font-size:10px;color:#8a7040;letter-spacing:1px;margin-top:3px;text-transform:uppercase;}
+    .brand-contact{font-size:11px;color:#5a4a20;line-height:1.7;margin-top:6px;}
+    .doc-type{font-family:'Cormorant Garamond',serif;font-size:30px;font-weight:600;color:#1a1200;letter-spacing:2px;text-align:right;}
+    .doc-num{font-family:'IBM Plex Mono',monospace;font-size:13px;color:#b8822a;text-align:right;margin-top:4px;}
+    .status-stamp{display:inline-block;border:2.5px solid ${statusColor};color:${statusColor};font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:3px;padding:3px 10px;text-transform:uppercase;margin-top:6px;font-weight:600;float:right;}
+    .line-table{width:100%;border-collapse:collapse;}
+    .line-table thead tr{background:#d4a843;}
+    .line-table thead th{padding:9px 12px;text-align:left;font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:1px;text-transform:uppercase;color:#1a1200;}
+    .line-table thead th:last-child{text-align:right;}
+    .totals-block{width:260px;margin-left:auto;margin-top:0;border:1px solid #e8d89a;}
+    .total-row{display:flex;justify-content:space-between;padding:7px 14px;font-size:13px;border-bottom:1px solid #e8d89a;}
+    .total-row.grand{background:#d4a843;font-weight:700;font-size:15px;}
+    .total-val{font-family:'IBM Plex Mono',monospace;font-weight:600;}
+    .footer-text{font-size:11px;color:#4a3a10;line-height:1.6;}
+    .print-toolbar{background:#1a1200;padding:12px 24px;display:flex;align-items:center;gap:12px;position:sticky;top:0;}
+    .ptbtn{padding:8px 16px;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;letter-spacing:1px;cursor:pointer;border:none;}
+    .ptbtn.primary{background:#d4a843;color:#1a1200;}
+    .ptbtn.secondary{background:transparent;color:#d4a843;border:1px solid #d4a843;}
+  </style></head><body>
+  <div class="print-toolbar no-print">
+    <button class="ptbtn primary" onclick="window.print()">⬇ DOWNLOAD / PRINT PDF</button>
+    <button class="ptbtn secondary" onclick="window.close()">✕ CLOSE</button>
+  </div>
+  <div class="page">
+    <div class="doc-header">
+      <div>
+        <div class="brand-name">${COMPANY.name}</div>
+        <div class="brand-tagline">${COMPANY.tagline}</div>
+        <div class="brand-contact">${COMPANY.address}<br>Heino: 062 274 9921 &nbsp;·&nbsp; Jaco: 072 470 6471<br><em>Not VAT Registered</em></div>
+      </div>
+      <div>
+        <div class="doc-type">${docTitle}</div>
+        <div class="doc-num">${item.id}</div>
+        <div class="status-stamp">${(item.status||'').toUpperCase()}</div>
+      </div>
+    </div>
+    <div style="margin-bottom:16px;"><strong>${portalData.clientName||''}</strong><br><span style="font-size:12px;color:#5a4a20">${isInv ? (item.project||'') : (item.desc||'')}</span></div>
+    <table class="line-table"><thead><tr><th style="width:55%">Description</th><th style="width:8%;text-align:center">Qty</th><th style="width:10%;text-align:center">Unit</th><th style="width:27%;text-align:right">Amount (R)</th></tr></thead><tbody>${lineRows}</tbody></table>
+    <div style="display:flex;margin-top:0;border:1px solid #e8d89a;border-top:none;">
+      <div style="flex:1;padding:14px;background:#fdf8ec;border-right:1px solid #e8d89a;">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#8a7040;margin-bottom:6px;">Notes</div>
+        <div class="footer-text">${isInv ? COMPANY.paymentTerms : COMPANY.quoteTerms.replace('{VALID_DATE}', item.valid ? new Date(item.valid).toLocaleDateString('en-ZA',{day:'numeric',month:'long',year:'numeric'}) : '').replace('{VALID_DAYS}','30')}</div>
+      </div>
+      <div class="totals-block" style="border:none;border-left:1px solid #e8d89a;width:240px;">
+        <div class="total-row"><span>Subtotal</span><span class="total-val">R ${subtotal.toLocaleString('en-ZA',{minimumFractionDigits:2})}</span></div>
+        ${!isInv && item.contingency ? `<div class="total-row"><span>Contingency (${item.contingencyPct||0}%)</span><span class="total-val">R ${item.contingency.toLocaleString('en-ZA',{minimumFractionDigits:2})}</span></div>` : ''}
+        <div class="total-row"><span style="color:#8a7040;font-size:11px">VAT (Not Registered)</span><span class="total-val" style="color:#8a7040;font-size:11px">R 0.00</span></div>
+        <div class="total-row grand"><span>TOTAL</span><span class="total-val">R ${item.amount.toLocaleString('en-ZA',{minimumFractionDigits:2})}</span></div>
+      </div>
+    </div>
+    <div style="margin-top:24px;padding-top:14px;border-top:1px solid #e8d89a;">
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#8a7040;margin-bottom:5px;">Banking Details</div>
+      <div class="footer-text" style="font-family:'IBM Plex Mono',monospace;color:#1a1200;">${COMPANY.bank}</div>
+      <div class="footer-text" style="margin-top:4px">Reference: ${item.id}</div>
+    </div>
+  </div>
+  </body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) { toast('Please allow pop-ups to view the PDF'); return; }
+  w.document.write(html);
+  w.document.close();
+}
+
+loadPortal();
+</script>
+</body>
+</html>
