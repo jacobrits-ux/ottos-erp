@@ -63,6 +63,13 @@ function saveStore(data) {
   }
 }
 
+// ══════════════════════════════════════════════════════
+// ── FIREBASE REAL-TIME SYNC — state declared BEFORE store init ──
+// (saveStore() references these; must exist before loadStore() runs)
+// ══════════════════════════════════════════════════════
+let db = null;
+let syncEnabled = false;
+
 // Plain object store — call save() after every mutation
 const store = loadStore();
 // Ensure timeSessions exists on older stores that pre-date this field
@@ -83,8 +90,6 @@ const DEVICE_ID = localStorage.getItem('ottos_device_id') || (() => {
   return id;
 })();
 
-let db = null;
-let syncEnabled = false;
 let firebaseSaveTimer = null;
 let pendingFormSubmissions = [];         // in-memory, from Firebase clientForms
 const processedFormIds = new Set();     // prevents re-notifying same submission
