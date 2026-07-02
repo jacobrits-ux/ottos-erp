@@ -1,3 +1,4 @@
+
 // ============ DATA STORE ============
 // ── PERSISTENT STORAGE ──
 const STORAGE_KEY = 'ottos_erp_v2_clean';
@@ -692,7 +693,7 @@ function navigate(page) {
   if (pageEl) pageEl.classList.add('active');
   currentPage = page;
 
-  const titles = { dashboard:'Dashboard', projects:'Projects', schedule:'Schedule', jobs:'Job Tickets', quotes:'Quotes', invoices:'Invoices', expenses:'Expenses', clients:'Clients', crew:'Crew & Workers', materials:'Materials Inventory', reports:'Reports', scanner:'Scan Supplier Invoice', describe:'Describe Project → BOM', timetrack:'GPS Time Tracking' };
+  const titles = { dashboard:'Dashboard', projects:'Projects', schedule:'Schedule', jobs:'Job Tickets', quotes:'Quotes', invoices:'Invoices', expenses:'Expenses', clients:'Clients', crew:'Crew & Workers', materials:'Materials Inventory', reports:'Reports', scanner:'Scan Supplier Invoice', describe:'Describe Project → BOM', timetrack:'GPS Time Tracking', blueprint:'Blueprint & Photo Analyzer' };
   const buttons = {
     dashboard:{ primary:'+ NEW PROJECT', secondary:null }, projects:{ primary:'+ NEW PROJECT', secondary:'EXPORT' },
     jobs:{ primary:'+ NEW TICKET', secondary:null }, quotes:{ primary:'+ NEW QUOTE', secondary:'EXPORT' },
@@ -700,7 +701,7 @@ function navigate(page) {
     clients:{ primary:'+ NEW CLIENT', secondary:null }, crew:{ primary:'+ ADD WORKER', secondary:null },
     materials:{ primary:'+ ADD ITEM', secondary:null }, schedule:{ primary:'+ ASSIGN', secondary:null },
     reports:{ primary:'EXPORT PDF', secondary:null }, scanner:{ primary:'📷 SCAN INVOICE', secondary:null }, describe:{ primary:'💬 DESCRIBE PROJECT', secondary:null },
-    timetrack:{ primary:'+ LOG MANUAL', secondary:'EXPORT CSV' },
+    timetrack:{ primary:'+ LOG MANUAL', secondary:'EXPORT CSV' }, blueprint:{ primary:'⊞ UPLOAD', secondary:null },
   };
   document.getElementById('page-title').textContent = titles[page] || page.toUpperCase();
   const b = buttons[page] || { primary:'+ NEW', secondary:null };
@@ -714,13 +715,25 @@ function navigate(page) {
 }
 
 function renderPage(p) {
-  const fn = { dashboard:renderDashboard, projects:renderProjects, schedule:renderSchedule, jobs:renderJobs, quotes:renderQuotes, invoices:renderInvoices, expenses:renderExpenses, clients:renderClients, crew:renderCrew, materials:renderMaterials, reports:renderReports, scanner:renderScanner, describe:renderDescribe, timetrack:renderTimeTrack };
+  const fn = { dashboard:renderDashboard, projects:renderProjects, schedule:renderSchedule, jobs:renderJobs, quotes:renderQuotes, invoices:renderInvoices, expenses:renderExpenses, clients:renderClients, crew:renderCrew, materials:renderMaterials, reports:renderReports, scanner:renderScanner, describe:renderDescribe, timetrack:renderTimeTrack, blueprint:renderBlueprint };
   if (fn[p]) fn[p]();
 }
 
 const fmt = n => 'R' + Number(n).toLocaleString('en-ZA', {minimumFractionDigits:0});
 const fmtS = n => 'R' + (n/1000).toFixed(0) + 'K';
 const dt = d => { if(!d) return '-'; const p=d.split('-'); return `${p[2]}/${p[1]}/${p[0].slice(2)}`; };
+
+// BUG FIX (1 July 2026): toast() was called 54 times throughout the app but never defined —
+// every call threw ReferenceError, silently breaking any code that ran after it (auto-navigate
+// after Save as Quote, Add to Inventory, Convert to Invoice, Scan Invoice import, New Client save).
+function toast(msg) {
+  const t = document.getElementById('toast');
+  if (!t) return;
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.remove('show'), 2800);
+}
 
 function statusBadge(s) {
   const m = { active:'badge-blue', completed:'badge-green', 'on-hold':'badge-gray', paid:'badge-green', overdue:'badge-red', sent:'badge-yellow', draft:'badge-gray', approved:'badge-green', pending:'badge-yellow', declined:'badge-red', 'in-progress':'badge-blue', done:'badge-green', open:'badge-gray', 'on-site':'badge-green', available:'badge-yellow', leave:'badge-gray', high:'badge-red', medium:'badge-yellow', low:'badge-gray', Materials:'badge-blue', Labour:'badge-purple', Other:'badge-gray', credit:'badge-purple' };
@@ -1428,6 +1441,7 @@ function handlePrimary() {
     scanner:  () => document.getElementById('scan-file-input').click(),
     describe: () => document.getElementById('desc-text').focus(),
     timetrack: showManualTimeEntry,
+    blueprint: () => document.getElementById('bp-file-input').click(),
   };
   (m[currentPage] || (() => toast('Coming soon')))();
 }
@@ -3421,6 +3435,410 @@ function formatDuration(mins) {
   if (!mins || mins < 1) return '0m';
   const h = Math.floor(mins / 60), m = mins % 60;
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+// ══════════════════════════════════════════════════════
+// ── BLUEPRINT & PHOTO ANALYZER — merged from standalone blueprint-analyzer.html, 1 July 2026 ──
+// ══════════════════════════════════════════════════════
+let bpUploadedPhotos = []; // { file, base64, name }
+let bpCurrentMode = 'blueprint'; // 'blueprint' | 'photo'
+let bpAnalysisResult = null;
+
+function bpSleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function renderBlueprint() {
+  // Stateless page — nothing to populate from store on entry.
+}
+
+function bpSetMode(mode) {
+  bpCurrentMode = mode;
+  document.getElementById('bp-mode-blueprint').classList.toggle('active', mode === 'blueprint');
+  document.getElementById('bp-mode-photo').classList.toggle('active', mode === 'photo');
+  document.getElementById('bp-photo-hints').style.display = mode === 'photo' ? '' : 'none';
+
+  const uploadTitle = document.getElementById('bp-upload-title');
+  const uploadSub   = document.getElementById('bp-upload-sub');
+  const uploadIcon  = document.getElementById('bp-upload-icon');
+
+  if (mode === 'photo') {
+    uploadTitle.textContent = 'DROP SITE PHOTOS HERE';
+    uploadSub.innerHTML = 'Upload multiple photos of the structure<br>Exterior · Interior · Roof · Damage · Close-ups';
+    uploadIcon.textContent = '◉';
+    document.getElementById('bp-file-input').setAttribute('multiple', '');
+  } else {
+    uploadTitle.textContent = 'DROP BLUEPRINT HERE';
+    uploadSub.innerHTML = 'Tap to take a photo or select files<br>Floor plans · Elevations · Site plans · Sketches';
+    uploadIcon.textContent = '⊞';
+  }
+  bpClearPhotos();
+}
+
+function bpHandleFileSelect(e) {
+  const files = Array.from(e.target.files);
+  if (files.length) bpLoadFiles(files);
+  e.target.value = '';
+}
+function bpAddMorePhotos(e) {
+  const files = Array.from(e.target.files);
+  if (files.length) bpLoadFiles(files);
+  e.target.value = '';
+}
+function bpLoadFiles(files) {
+  files.forEach(file => {
+    if (!file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      bpUploadedPhotos.push({ file, base64: ev.target.result, name: file.name });
+      bpRenderPhotoGrid();
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function bpRenderPhotoGrid() {
+  const count = bpUploadedPhotos.length;
+  if (count === 0) {
+    document.getElementById('bp-photo-grid-wrapper').style.display = 'none';
+    document.getElementById('bp-upload-zone').style.display = '';
+    document.getElementById('bp-preview').style.display = 'none';
+    return;
+  }
+  if (bpCurrentMode === 'photo') {
+    document.getElementById('bp-upload-zone').style.display = 'none';
+    document.getElementById('bp-preview').style.display = 'none';
+    document.getElementById('bp-photo-grid-wrapper').style.display = 'block';
+    document.getElementById('bp-photo-count-label').textContent = count + ' photo' + (count > 1 ? 's' : '') + ' loaded';
+    document.getElementById('bp-photo-grid').innerHTML = bpUploadedPhotos.map((p, i) => `
+      <div class="bp-photo-thumb">
+        <img src="${p.base64}" alt="${p.name}">
+        <button class="bp-photo-remove" onclick="bpRemovePhoto(${i})">✕</button>
+        <div class="bp-photo-num">${i + 1}</div>
+      </div>`).join('');
+  } else {
+    document.getElementById('bp-upload-zone').style.display = 'none';
+    document.getElementById('bp-photo-grid-wrapper').style.display = 'none';
+    document.getElementById('bp-preview').style.display = 'block';
+    document.getElementById('bp-preview-img').src = bpUploadedPhotos[0].base64;
+  }
+  toast(count + ' image' + (count > 1 ? 's' : '') + ' loaded');
+}
+
+function bpRemovePhoto(i) {
+  bpUploadedPhotos.splice(i, 1);
+  bpRenderPhotoGrid();
+  if (bpUploadedPhotos.length === 0) {
+    document.getElementById('bp-upload-zone').style.display = '';
+    document.getElementById('bp-photo-grid-wrapper').style.display = 'none';
+  }
+}
+
+function bpClearPhotos() {
+  bpUploadedPhotos = [];
+  document.getElementById('bp-upload-zone').style.display = '';
+  document.getElementById('bp-photo-grid-wrapper').style.display = 'none';
+  document.getElementById('bp-preview').style.display = 'none';
+}
+
+async function bpRunAnalysis() {
+  if (bpUploadedPhotos.length === 0) { toast('Please upload at least one image first'); return; }
+
+  const btn = document.getElementById('bp-analyze-btn');
+  btn.disabled = true;
+  document.getElementById('bp-shimmer').style.display = 'block';
+
+  const isPhotoMode = bpCurrentMode === 'photo';
+  if (!isPhotoMode) {
+    document.getElementById('bp-scan-grid').classList.add('active');
+    document.getElementById('bp-scan-line').classList.add('active');
+  }
+
+  const overlay  = document.getElementById('bp-loading-overlay');
+  overlay.classList.add('active');
+  const steps    = 6;
+  const stepEl   = n => document.getElementById('bp-step-' + n);
+  const progress = document.getElementById('bp-loading-progress');
+
+  stepEl(1).querySelector('span').textContent = isPhotoMode ? `Sending ${bpUploadedPhotos.length} photo(s) to Claude Vision AI` : 'Sending blueprint to Claude Vision AI';
+  stepEl(2).querySelector('span').textContent = isPhotoMode ? 'Identifying structure, materials & finishes' : 'Detecting dimensions & room elements';
+
+  for (let i = 1; i <= steps; i++) {
+    stepEl(i).classList.add('active');
+    progress.style.width = ((i / steps) * 85) + '%';
+    await bpSleep(isPhotoMode ? 500 : 600);
+  }
+
+  const cfg = {
+    type: document.getElementById('bp-cfg-type').value,
+    region: document.getElementById('bp-cfg-region').value,
+    quality: document.getElementById('bp-cfg-quality').value,
+    labour: document.getElementById('bp-cfg-labour').value,
+    scale: document.getElementById('bp-cfg-scale').value,
+    area: document.getElementById('bp-cfg-area').value,
+    notes: document.getElementById('bp-cfg-notes').value,
+  };
+  const labourRates = { low:{min:300,max:400}, mid:{min:500,max:700}, high:{min:700,max:1000} };
+  const qualityMultiplier = { budget:0.75, mid:1.0, premium:1.4, luxury:2.0 };
+
+  const photoModeInstructions = isPhotoMode ? `
+You are analyzing ${bpUploadedPhotos.length} SITE PHOTOGRAPH(S) of an actual structure (not a drawing).
+From these photos, identify:
+- The type of structure and its approximate size
+- Existing materials visible: roofing, wall cladding, windows, doors, flooring, ceilings, fixtures
+- Condition of existing materials (new, fair, deteriorating, damaged)
+- What work is needed based on visible condition or the project type selected
+- Any visible damage, damp, structural issues, or items requiring replacement
+- Estimate quantities from photo proportions, standard construction sizes, and context clues
+Set confidence based on photo quality and how clearly materials/scope can be determined (typically 55–80% for photos vs drawings).
+` : `
+You are analyzing an ARCHITECTURAL DRAWING, floor plan, or blueprint.
+Detect room layouts, dimensions, structural elements, and derive accurate quantities from the drawing.
+Set confidence based on drawing clarity and detail (typically 70–90% for clear drawings).
+`;
+
+  const systemPrompt = `You are an expert South African quantity surveyor and construction estimator with 20+ years experience. You analyze both architectural drawings AND site photographs to produce detailed Bills of Materials (BOM) and construction cost estimates.
+${photoModeInstructions}
+Return ONLY a valid JSON object — no preamble, no markdown fences, just raw JSON:
+{
+  "confidence": 72,
+  "inputType": "${isPhotoMode ? 'site_photos' : 'blueprint'}",
+  "photoCount": ${bpUploadedPhotos.length},
+  "detectedArea": 55,
+  "detectedRooms": ["lounge", "kitchen", "2 bedrooms", "bathroom"],
+  "projectDescription": "Detailed paragraph of what you observe across all images",
+  "estimatedDuration": 14,
+  "observations": [
+    {"icon": "◈", "text": "Specific observation from images"},
+    {"icon": "⊟", "text": "Material or condition noted"}
+  ],
+  "bom": [
+    { "item": "Concrete Blocks (230x110x75mm)", "category": "Concrete", "qty": 850, "unit": "Each", "unitCost": 7.50, "notes": "For new boundary wall, estimated from photo" }
+  ],
+  "labour": [
+    { "trade": "Bricklayer", "days": 8, "workers": 2, "ratePerDay": 600, "notes": "Blockwork construction" }
+  ],
+  "risks": [
+    {"icon": "⚠", "text": "Risk or assumption based on limited photo visibility"},
+    {"icon": "⊕", "text": "Recommended site visit for accurate measurement"}
+  ],
+  "contingency": ${isPhotoMode ? 15 : 10}
+}
+RULES:
+- Region: ${cfg.region.replace('_',' ')} — use current ZAR pricing
+- Quality: ${cfg.quality} (${Math.round(qualityMultiplier[cfg.quality]*100)}% of standard rates)
+- Labour: ${cfg.labour} (R${labourRates[cfg.labour].min}–R${labourRates[cfg.labour].max}/day)
+- Project type: ${cfg.type.replace('_',' ')}
+${cfg.area ? `- Client stated area: ${cfg.area}m²` : '- Estimate area from images'}
+${cfg.notes ? `- Client notes: ${cfg.notes}` : ''}
+- Add 10% waste to all material quantities
+- BOM: 8–18 line items across all relevant categories
+- Labour: 4–8 trade types
+- Categories: Concrete | Timber | Roofing | Electrical | Plumbing | Finishes | Labour | Other
+- Company is NOT VAT registered — never mention or include VAT in any figure
+${isPhotoMode ? '- Increase contingency to 15% due to photo-based estimation uncertainty\n- Note in risks that a site measurement visit is recommended for final pricing' : ''}
+- Return ONLY the JSON object.`;
+
+  try {
+    const imageBlocks = bpUploadedPhotos.map(p => ({
+      type: 'image',
+      source: { type: 'base64', media_type: p.file.type.startsWith('image/') ? p.file.type : 'image/jpeg', data: p.base64.split(',')[1] }
+    }));
+    const textBlock = {
+      type: 'text',
+      text: isPhotoMode
+        ? `These are ${bpUploadedPhotos.length} site photo(s) of a structure. Please analyze all images together and produce the Bill of Materials and cost estimate JSON. Project type: ${cfg.type.replace('_',' ')}. Quality: ${cfg.quality}. Region: ${cfg.region}.`
+        : `Please analyze this blueprint/drawing and produce the Bill of Materials and cost estimate JSON. Project type: ${cfg.type.replace('_',' ')}. Quality: ${cfg.quality}. Region: ${cfg.region}.`
+    };
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 4000, system: systemPrompt, messages: [{ role: 'user', content: [...imageBlocks, textBlock] }] })
+    });
+    if (!response.ok) { const errText = await response.text(); throw new Error(`API error ${response.status}: ${errText.slice(0,300)}`); }
+    const data = await response.json();
+    if (data.error) throw new Error(data.error.message || 'API returned error');
+    const rawText = data.content.map(b => b.text || '').join('');
+    let jsonStr = rawText.replace(/```json|```/g, '').trim();
+    const start = jsonStr.indexOf('{'), end = jsonStr.lastIndexOf('}');
+    if (start !== -1 && end !== -1) jsonStr = jsonStr.slice(start, end + 1);
+    bpAnalysisResult = JSON.parse(jsonStr);
+
+    progress.style.width = '100%';
+    for (let i = 1; i <= steps; i++) { stepEl(i).classList.remove('active'); stepEl(i).classList.add('done'); }
+    await bpSleep(600);
+    overlay.classList.remove('active');
+    bpRenderResults(bpAnalysisResult);
+  } catch (err) {
+    overlay.classList.remove('active');
+    console.error('Blueprint analysis error:', err);
+    document.getElementById('bp-placeholder').style.display = 'none';
+    const container = document.getElementById('bp-results');
+    container.style.display = 'block';
+    container.innerHTML = `<div style="background:rgba(224,82,82,.1);border:1px solid rgba(224,82,82,.3);padding:20px;margin-bottom:10px;">
+      <div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--red);text-transform:uppercase;margin-bottom:8px;">⚠ Analysis Failed</div>
+      <div style="font-size:13px;color:var(--text2);line-height:1.7;margin-bottom:10px;">${err.message}</div>
+      <div style="font-family:var(--fm);font-size:10px;color:var(--text3);line-height:1.8;">Common fixes:<br>· Check your internet connection<br>· Try a smaller or clearer image<br>· Compress very large images first</div>
+    </div>
+    <button onclick="location.reload()" style="width:100%;background:var(--surface2);color:var(--text2);border:1px solid var(--border);padding:10px;font-family:var(--fm);font-size:11px;letter-spacing:1px;cursor:pointer;">RELOAD &amp; TRY AGAIN</button>`;
+  }
+
+  btn.disabled = false;
+  document.getElementById('bp-shimmer').style.display = 'none';
+  if (!isPhotoMode) {
+    document.getElementById('bp-scan-grid').classList.remove('active');
+    document.getElementById('bp-scan-line').classList.remove('active');
+  }
+}
+
+function bpTotals(r) {
+  const matTotal    = (r.bom || []).reduce((s, i) => s + (i.qty * i.unitCost), 0);
+  const labourTotal = (r.labour || []).reduce((s, l) => s + (l.days * l.workers * l.ratePerDay), 0);
+  const subtotal    = matTotal + labourTotal;
+  const contingency = subtotal * ((r.contingency || 0) / 100);
+  const grand       = subtotal + contingency;
+  return { matTotal, labourTotal, subtotal, contingency, grand };
+}
+
+function bpRenderResults(r) {
+  document.getElementById('bp-placeholder').style.display = 'none';
+  document.getElementById('bp-results').style.display = 'block';
+
+  const { matTotal, labourTotal, subtotal, contingency, grand } = bpTotals(r);
+
+  document.getElementById('bp-res-total').textContent = fmt(grand);
+  document.getElementById('bp-res-range').textContent = `Range: ${fmt(grand * 0.88)} – ${fmt(grand * 1.12)}`;
+  document.getElementById('bp-res-area').textContent = (r.detectedArea || '?') + 'm²';
+  document.getElementById('bp-res-rate').textContent = r.detectedArea ? fmt(Math.round(grand / r.detectedArea)) + '/m²' : 'area not detected';
+  document.getElementById('bp-res-duration').textContent = r.estimatedDuration || '?';
+
+  const conf = r.confidence || 70;
+  const confColor = conf >= 80 ? 'var(--green)' : conf >= 60 ? 'var(--accent)' : 'var(--red)';
+  document.getElementById('bp-conf-fill').style.width = conf + '%';
+  document.getElementById('bp-conf-fill').style.background = confColor;
+  document.getElementById('bp-conf-pct').textContent = conf + '%';
+  document.getElementById('bp-conf-pct').style.color = confColor;
+
+  document.getElementById('bp-observations-list').innerHTML = (r.observations || []).map(o =>
+    `<div class="bp-obs-item"><span>${o.icon}</span><span>${o.text}</span></div>`
+  ).join('') || '<div class="bp-obs-item"><span>◈</span><span>Blueprint analyzed successfully.</span></div>';
+
+  document.getElementById('bp-bom-body').innerHTML = (r.bom || []).map((item, i) => {
+    const total = item.qty * item.unitCost;
+    return `<tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:6px 8px;">
+        <input class="bp-editable" value="${item.item}" onchange="bpUpdateBomItem(${i},'item',this.value)">
+        ${item.notes ? `<div style="font-family:var(--fm);font-size:9px;color:var(--text3);padding-left:4px;margin-top:2px">${item.notes}</div>` : ''}
+      </td>
+      <td style="padding:6px 8px;"><span class="badge bp-badge-cat-${item.category}">${item.category}</span></td>
+      <td style="padding:6px 8px;text-align:right;"><input class="bp-editable bp-editable-num" type="number" value="${item.qty}" onchange="bpUpdateBomItem(${i},'qty',+this.value)"></td>
+      <td style="padding:6px 8px;text-align:right;font-family:var(--fm);font-size:11px;color:var(--text3);">${item.unit}</td>
+      <td style="padding:6px 8px;text-align:right;"><input class="bp-editable bp-editable-num" type="number" value="${item.unitCost}" onchange="bpUpdateBomItem(${i},'unitCost',+this.value)"></td>
+      <td style="padding:6px 8px;text-align:right;font-family:var(--fm);font-size:12px;color:var(--accent);font-weight:600;" id="bp-bom-line-${i}">${fmt(total)}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('bp-bom-total').textContent = fmt(matTotal);
+
+  document.getElementById('bp-labour-body').innerHTML = (r.labour || []).map((l, i) => {
+    const total = l.days * l.workers * l.ratePerDay;
+    return `<tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:6px 8px;">
+        <input class="bp-editable" value="${l.trade}" onchange="bpUpdateLabourItem(${i},'trade',this.value)">
+        ${l.notes ? `<div style="font-family:var(--fm);font-size:9px;color:var(--text3);padding-left:4px;margin-top:2px">${l.notes}</div>` : ''}
+      </td>
+      <td style="padding:6px 8px;text-align:right;"><input class="bp-editable bp-editable-num" type="number" value="${l.days}" onchange="bpUpdateLabourItem(${i},'days',+this.value)"></td>
+      <td style="padding:6px 8px;text-align:right;font-family:var(--fm);font-size:11px;">${l.workers}</td>
+      <td style="padding:6px 8px;text-align:right;font-family:var(--fm);font-size:11px;color:var(--text2);">${fmt(l.ratePerDay)}</td>
+      <td style="padding:6px 8px;text-align:right;font-family:var(--fm);font-size:12px;color:var(--green);font-weight:600;" id="bp-labour-line-${i}">${fmt(total)}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('bp-labour-total').textContent = fmt(labourTotal);
+
+  bpRenderEstimateRows(r);
+
+  document.getElementById('bp-risks-list').innerHTML = (r.risks || []).map(risk =>
+    `<div class="bp-obs-item"><span>${risk.icon}</span><span>${risk.text}</span></div>`
+  ).join('') || '<div class="bp-obs-item"><span>⊕</span><span>No major risks identified.</span></div>';
+
+  document.querySelector('.content').scrollTop = 0;
+  toast('Analysis complete — ' + (r.bom||[]).length + ' items ✓');
+}
+
+function bpRenderEstimateRows(r) {
+  const { matTotal, labourTotal, subtotal, contingency, grand } = bpTotals(r);
+  document.getElementById('bp-estimate-rows').innerHTML = `
+    <div class="bp-estimate-row"><span class="label">Materials</span><span class="amount">${fmt(matTotal)}</span></div>
+    <div class="bp-estimate-row"><span class="label">Labour</span><span class="amount">${fmt(labourTotal)}</span></div>
+    <div class="bp-estimate-row"><span class="label">Subtotal</span><span class="amount">${fmt(subtotal)}</span></div>
+    <div class="bp-estimate-row"><span class="label">Contingency (${r.contingency||0}%)</span><span class="amount">${fmt(contingency)}</span></div>
+    <div class="bp-estimate-row"><span class="label">VAT</span><span class="amount">Not Registered</span></div>
+    <div class="bp-estimate-row total"><span class="label">TOTAL PROJECT ESTIMATE</span><span class="amount">${fmt(grand)}</span></div>`;
+}
+
+function bpUpdateBomItem(i, field, value) {
+  bpAnalysisResult.bom[i][field] = value;
+  const item = bpAnalysisResult.bom[i];
+  const el = document.getElementById('bp-bom-line-' + i);
+  if (el) el.textContent = fmt(item.qty * item.unitCost);
+  bpRefreshTotals();
+}
+function bpUpdateLabourItem(i, field, value) {
+  bpAnalysisResult.labour[i][field] = value;
+  const l = bpAnalysisResult.labour[i];
+  const el = document.getElementById('bp-labour-line-' + i);
+  if (el) el.textContent = fmt(l.days * l.workers * l.ratePerDay);
+  bpRefreshTotals();
+}
+function bpRefreshTotals() {
+  const { matTotal, labourTotal, grand } = bpTotals(bpAnalysisResult);
+  document.getElementById('bp-bom-total').textContent = fmt(matTotal);
+  document.getElementById('bp-labour-total').textContent = fmt(labourTotal);
+  document.getElementById('bp-res-total').textContent = fmt(grand);
+  bpRenderEstimateRows(bpAnalysisResult);
+}
+
+// ── Save straight into the ERP — the actual reason for merging this into the dashboard ──
+function bpSaveAsQuote() {
+  if (!bpAnalysisResult) return;
+  const r = bpAnalysisResult;
+  const { subtotal, contingency, grand } = bpTotals(r);
+
+  const lines = [
+    ...(r.bom || []).map(item => ({ desc: item.item, qty: item.qty, unit: item.unit, cost: item.unitCost, markup: 0, clientPrice: item.unitCost, lineTotal: Math.round(item.qty * item.unitCost * 100) / 100 })),
+    ...(r.labour || []).map(l => ({ desc: l.trade + ' labour', qty: l.days * l.workers, unit: 'day', cost: l.ratePerDay, markup: 0, clientPrice: l.ratePerDay, lineTotal: Math.round(l.days * l.workers * l.ratePerDay * 100) / 100 })),
+  ];
+
+  const id = 'QUO-' + new Date().getFullYear() + '-' + String(store.quotes.length + 1).padStart(3,'0');
+  store.quotes.unshift({
+    id, client: 'New Client',
+    desc: r.projectDescription ? r.projectDescription.slice(0,120) : 'Blueprint-generated quote',
+    amount: Math.round(grand),
+    date: new Date().toISOString().split('T')[0],
+    valid: new Date(Date.now() + 30*24*60*60*1000).toISOString().split('T')[0],
+    status: 'pending', version: 1,
+    lines, subtotal: Math.round(subtotal*100)/100, contingency: Math.round(contingency*100)/100, contingencyPct: r.contingency || 0,
+  });
+  store.activity.unshift({ text: `Quote ${id} created from Blueprint AI analysis (${(r.bom||[]).length} materials, ${(r.labour||[]).length} trades)`, time: 'Just now', type: 'green' });
+  save();
+  toast('Saved as quote ' + id + ' ✓');
+  setTimeout(() => navigate('quotes'), 1000);
+}
+
+function bpAddToInventory() {
+  if (!bpAnalysisResult) return;
+  let added = 0, updated = 0;
+  (bpAnalysisResult.bom || []).forEach(item => {
+    const existing = store.materials.find(m => m.name.toLowerCase() === item.item.toLowerCase());
+    if (existing) { existing.cost = item.unitCost; updated++; }
+    else {
+      store.materials.push({ id: Date.now() + Math.random(), name: item.item, cat: item.category || 'Other', unit: item.unit, stock: 0, min: Math.max(1, Math.floor(item.qty * 0.1)), cost: item.unitCost, supplier: '' });
+      added++;
+    }
+  });
+  save();
+  store.activity.unshift({ text: `Blueprint AI BOM imported to inventory — ${added} added, ${updated} updated`, time: 'Just now', type: 'green' });
+  save();
+  toast(`✓ ${added} items added, ${updated} updated in inventory`);
+  setTimeout(() => navigate('materials'), 1200);
 }
 
 // ══════════════════════════════════════════════════════

@@ -187,6 +187,76 @@ select option{background:var(--surface2);}
 .blueprint-btn{display:flex;align-items:center;gap:12px;background:linear-gradient(135deg,rgba(212,168,67,.08),rgba(212,168,67,.04));border:1px solid rgba(212,168,67,.3);padding:12px 16px;cursor:pointer;width:100%;text-align:left;margin-bottom:14px;transition:all .2s;}
 .blueprint-btn:hover{border-color:rgba(212,168,67,.6);background:linear-gradient(135deg,rgba(212,168,67,.12),rgba(212,168,67,.06));}
 
+/* ════ BLUEPRINT AI — merged from standalone blueprint-analyzer.html, 1 July 2026 ════ */
+@keyframes shimmer{0%{left:-100%;}100%{left:150%;}}
+.bp-mode-toggle{display:flex;border:1px solid var(--border);}
+.bp-mode-btn{flex:1;background:var(--surface2);border:none;color:var(--text3);padding:9px 10px;font-family:var(--fm);font-size:9px;letter-spacing:1px;cursor:pointer;transition:all .15s;border-right:1px solid var(--border);}
+.bp-mode-btn:last-child{border-right:none;}
+.bp-mode-btn.active{background:var(--surface);color:var(--accent);}
+.bp-upload-zone{border:2px dashed var(--border);padding:32px 20px;text-align:center;cursor:pointer;position:relative;transition:all .2s;background:var(--surface);}
+.bp-upload-zone:hover,.bp-upload-zone.dragover{border-color:var(--accent);background:rgba(212,168,67,.04);}
+.bp-upload-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
+.bp-upload-icon{font-size:34px;margin-bottom:10px;color:var(--text3);}
+.bp-upload-title{font-family:var(--fd);font-size:20px;letter-spacing:2px;color:var(--text2);margin-bottom:6px;}
+.bp-upload-sub{font-family:var(--fm);font-size:10px;color:var(--text3);letter-spacing:1px;line-height:1.8;}
+.bp-format-tag{background:var(--surface2);border:1px solid var(--border);font-family:var(--fm);font-size:9px;letter-spacing:1px;color:var(--text3);padding:2px 7px;}
+.bp-preview{background:var(--surface2);border:1px solid var(--border);position:relative;overflow:hidden;}
+.bp-scan-grid{position:absolute;inset:0;background-image:linear-gradient(rgba(212,168,67,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(212,168,67,.06) 1px,transparent 1px);background-size:32px 32px;animation:gridPulse 1.5s ease-in-out infinite;display:none;pointer-events:none;}
+.bp-scan-grid.active{display:block;}
+.bp-scan-line{position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);animation:scan 1.8s linear infinite;display:none;}
+.bp-scan-line.active{display:block;}
+@keyframes scan{0%{top:0;opacity:1;}90%{opacity:1;}100%{top:100%;opacity:0;}}
+@keyframes gridPulse{0%,100%{opacity:.3;}50%{opacity:1;}}
+.bp-photo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
+.bp-photo-thumb{position:relative;aspect-ratio:4/3;overflow:hidden;background:var(--surface2);border:1px solid var(--border);}
+.bp-photo-thumb img{width:100%;height:100%;object-fit:cover;display:block;}
+.bp-photo-num{position:absolute;top:4px;left:4px;background:var(--accent);color:var(--bg);font-family:var(--fm);font-size:9px;width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-weight:600;}
+.bp-photo-remove{position:absolute;top:4px;right:4px;background:rgba(15,15,13,.85);border:1px solid var(--border);color:var(--text2);font-size:12px;width:18px;height:18px;line-height:1;cursor:pointer;}
+.bp-summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px;}
+.bp-summary-card{background:var(--surface);border:1px solid var(--border);padding:12px;position:relative;overflow:hidden;}
+.bp-summary-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;}
+.bp-summary-card.orange::before{background:var(--accent);}
+.bp-summary-card.blue::before{background:var(--blue);}
+.bp-summary-card.green::before{background:var(--green);}
+.bp-summary-value{font-family:var(--fd);font-size:24px;letter-spacing:1px;line-height:1;}
+.bp-badge-cat-Concrete{background:rgba(90,86,80,.4);color:var(--text3);border:1px solid var(--border);}
+.bp-badge-cat-Timber{background:rgba(196,92,26,.2);color:#e07020;border:1px solid rgba(196,92,26,.3);}
+.bp-badge-cat-Roofing{background:rgba(74,159,212,.15);color:var(--blue);border:1px solid rgba(74,159,212,.3);}
+.bp-badge-cat-Electrical{background:rgba(212,168,67,.15);color:var(--accent);border:1px solid rgba(212,168,67,.3);}
+.bp-badge-cat-Plumbing{background:rgba(76,175,125,.15);color:var(--green);border:1px solid rgba(76,175,125,.3);}
+.bp-badge-cat-Finishes{background:rgba(155,114,207,.15);color:var(--purple);border:1px solid rgba(155,114,207,.3);}
+.bp-badge-cat-Labour{background:rgba(224,82,82,.15);color:var(--red);border:1px solid rgba(224,82,82,.3);}
+.bp-badge-cat-Other{background:rgba(90,86,80,.3);color:var(--text3);border:1px solid var(--border);}
+.bp-obs-item{display:flex;gap:10px;align-items:flex-start;font-size:12px;color:var(--text2);line-height:1.5;padding:2px 0;}
+.bp-estimate-row{display:flex;padding:8px 14px;border-bottom:1px solid var(--border);align-items:center;font-size:12px;}
+.bp-estimate-row:last-child{border-bottom:none;}
+.bp-estimate-row .label{flex:1;color:var(--text2);}
+.bp-estimate-row .amount{font-family:var(--fm);font-size:12px;color:var(--text);min-width:90px;text-align:right;}
+.bp-estimate-row.total{background:var(--surface2);}
+.bp-estimate-row.total .label{font-weight:600;color:var(--text);}
+.bp-estimate-row.total .amount{color:var(--accent);font-size:14px;}
+.bp-editable{background:none;border:none;color:var(--text);font-family:var(--fb);font-size:12px;padding:2px 4px;width:100%;cursor:text;}
+.bp-editable:focus{outline:1px solid var(--accent);background:rgba(212,168,67,.08);}
+.bp-editable-num{font-family:var(--fm);font-size:11px;text-align:right;width:65px;color:var(--text2);}
+.bp-confidence-bar{display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--surface2);}
+.bp-conf-track{flex:1;height:4px;background:var(--border);border-radius:2px;overflow:hidden;}
+.bp-conf-fill{height:100%;border-radius:2px;transition:width 1s ease .3s;width:0%;}
+.bp-conf-pct{font-family:var(--fm);font-size:10px;min-width:32px;text-align:right;}
+.bp-loading-overlay{position:fixed;inset:0;background:rgba(15,15,13,.9);display:none;align-items:center;justify-content:center;flex-direction:column;gap:20px;z-index:3500;padding:24px;text-align:center;}
+.bp-loading-overlay.active{display:flex;}
+.bp-loading-title{font-family:var(--fd);font-size:26px;letter-spacing:3px;color:var(--accent);}
+.bp-loading-steps{display:flex;flex-direction:column;gap:8px;align-items:flex-start;}
+.bp-loading-step{font-family:var(--fm);font-size:10px;color:var(--text3);letter-spacing:1px;display:flex;align-items:center;gap:8px;transition:color .3s;}
+.bp-loading-step.active{color:var(--accent);}
+.bp-loading-step.done{color:var(--green);}
+.bp-step-dot{width:6px;height:6px;border-radius:50%;background:var(--text3);transition:background .3s;flex-shrink:0;}
+.bp-loading-step.active .bp-step-dot{background:var(--accent);animation:pulse .8s ease-in-out infinite;}
+.bp-loading-step.done .bp-step-dot{background:var(--green);}
+@keyframes pulse{0%,100%{transform:scale(1);opacity:1;}50%{transform:scale(1.5);opacity:.7;}}
+.bp-progress-track{width:260px;height:3px;background:var(--surface2);border-radius:2px;overflow:hidden;}
+.bp-progress-fill{height:100%;background:var(--accent);border-radius:2px;transition:width .4s ease;width:0%;}
+@media(max-width:767px){.bp-loading-title{font-size:20px;}.bp-progress-track{width:200px;}}
+
 /* ════ RESPONSIVE ════ */
 @media(max-width:1024px){
   .sidebar{width:190px;min-width:190px;}
@@ -363,11 +433,9 @@ select option{background:var(--surface2);}
       <div class="nav-label">Tools</div>
       <div class="nav-item" onclick="navigate('reports')"><span class="nav-icon">⊞</span>Reports</div>
       <div class="nav-item" onclick="navigate('timetrack')" style="color:var(--green)"><span class="nav-icon">📍</span>Time Tracking<span class="nav-badge" id="active-sessions-badge" style="display:none;background:var(--green)">0</span></div>
-      <div class="nav-item" onclick="navigate('reports')"><span class="nav-icon">⊞</span>Reports</div>
-      <div class="nav-item" onclick="navigate('timetrack')" style="color:var(--green)"><span class="nav-icon">📍</span>Time Tracking<span class="nav-badge" id="active-sessions-badge" style="display:none;background:var(--green)">0</span></div>
       <div class="nav-item" onclick="navigate('describe')" style="color:var(--purple)"><span class="nav-icon">◈</span>Describe Project</div>
       <div class="nav-item" onclick="navigate('scanner')" style="color:var(--green)"><span class="nav-icon">◉</span>Scan Invoice</div>
-      <div class="nav-item" onclick="window.open('blueprint-analyzer.html','_blank')" style="color:var(--accent)"><span class="nav-icon">◈</span>Blueprint AI</div>
+      <div class="nav-item" onclick="navigate('blueprint')" style="color:var(--accent)"><span class="nav-icon">◈</span>Blueprint AI</div>
       <div class="nav-item" onclick="backupData()" style="color:var(--text3)"><span class="nav-icon">⬇</span>Backup Data</div>
       <div class="nav-item" onclick="restoreData()" style="color:var(--text3)"><span class="nav-icon">⬆</span>Restore Data</div>
       <div class="nav-item" onclick="showFirebaseSetup()" style="color:var(--blue)"><span class="nav-icon">⚡</span>Sync Setup</div>
@@ -379,7 +447,7 @@ select option{background:var(--surface2);}
 
       <!-- DASHBOARD -->
       <div class="page active" id="page-dashboard">
-        <button class="blueprint-btn" onclick="window.open('blueprint-analyzer.html','_blank')">
+        <button class="blueprint-btn" onclick="navigate('blueprint')">
           <span style="font-size:22px;color:var(--accent)">◈</span>
           <div style="flex:1">
             <div style="font-family:var(--fm);font-size:10px;letter-spacing:1px;color:var(--accent);text-transform:uppercase">Blueprint &amp; Photo Analyzer — AI Powered</div>
@@ -956,7 +1024,217 @@ select option{background:var(--surface2);}
         </div>
       </div>
 
+      <!-- BLUEPRINT & PHOTO ANALYZER -->
+      <div class="page" id="page-blueprint">
+        <div style="background:linear-gradient(135deg,rgba(212,168,67,.1),rgba(212,168,67,.04));border:1px solid rgba(212,168,67,.3);padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;gap:12px;">
+          <span style="font-size:24px;">◈</span>
+          <div>
+            <div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--accent);text-transform:uppercase;margin-bottom:2px;">AI Blueprint &amp; Photo Analyzer</div>
+            <div style="font-size:12px;color:var(--text2)">Upload a floor plan, drawing, or site photos. Claude Vision reads it and generates a full Bill of Materials, labour breakdown, and cost estimate — save straight into Quotes or Materials.</div>
+          </div>
+        </div>
+
+        <div class="two-col">
+          <!-- LEFT: UPLOAD + CONFIG -->
+          <div>
+            <div class="panel" style="margin-bottom:12px;">
+              <div class="panel-header"><span class="panel-title">01 — Upload Blueprint / Photos</span></div>
+              <div style="padding:14px;">
+                <div class="bp-mode-toggle">
+                  <button class="bp-mode-btn active" id="bp-mode-blueprint" onclick="bpSetMode('blueprint')">⊞ BLUEPRINT / DRAWING</button>
+                  <button class="bp-mode-btn" id="bp-mode-photo" onclick="bpSetMode('photo')">◉ SITE PHOTOS</button>
+                </div>
+
+                <div class="bp-upload-zone" id="bp-upload-zone" style="margin-top:12px;">
+                  <input type="file" id="bp-file-input" accept="image/*" capture="environment" multiple onchange="bpHandleFileSelect(event)">
+                  <div class="bp-upload-icon" id="bp-upload-icon">⊞</div>
+                  <div class="bp-upload-title" id="bp-upload-title">DROP BLUEPRINT HERE</div>
+                  <div class="bp-upload-sub" id="bp-upload-sub">Tap to take a photo or select files<br>Floor plans · Elevations · Site plans · Sketches</div>
+                  <div style="display:flex;justify-content:center;gap:6px;margin-top:12px;flex-wrap:wrap;">
+                    <span class="bp-format-tag">PNG</span><span class="bp-format-tag">JPG</span><span class="bp-format-tag">WEBP</span><span class="bp-format-tag">HEIC</span>
+                    <span class="bp-format-tag" style="background:rgba(212,168,67,.1);border-color:rgba(212,168,67,.3);color:var(--accent)">MULTI-PHOTO</span>
+                  </div>
+                </div>
+
+                <div id="bp-photo-grid-wrapper" style="display:none;margin-top:12px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                    <span style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;" id="bp-photo-count-label">0 photos loaded</span>
+                    <button onclick="bpClearPhotos()" class="action-btn">CLEAR ALL</button>
+                  </div>
+                  <div id="bp-photo-grid" class="bp-photo-grid"></div>
+                  <label style="display:flex;align-items:center;gap:8px;margin-top:8px;cursor:pointer;border:1px dashed var(--border);padding:8px 12px;color:var(--text3);font-family:var(--fm);font-size:10px;letter-spacing:1px;">
+                    <input type="file" accept="image/*" multiple style="display:none" onchange="bpAddMorePhotos(event)">
+                    ⊕ ADD MORE PHOTOS
+                  </label>
+                </div>
+
+                <div class="bp-preview" id="bp-preview" style="display:none;margin-top:12px;">
+                  <div class="bp-scan-grid" id="bp-scan-grid"></div>
+                  <div class="bp-scan-line" id="bp-scan-line"></div>
+                  <img id="bp-preview-img" src="" alt="Blueprint" style="width:100%;max-height:300px;object-fit:contain;display:block;background:var(--bg);">
+                </div>
+
+                <div id="bp-photo-hints" style="display:none;margin-top:10px;background:rgba(74,159,212,.06);border:1px solid rgba(74,159,212,.2);padding:10px 12px;">
+                  <div style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--blue);text-transform:uppercase;margin-bottom:6px;">📸 Tips for best results</div>
+                  <div style="font-size:11px;color:var(--text2);line-height:1.8;">
+                    · Upload 4–8 photos covering all angles for highest accuracy<br>
+                    · Include: exterior front, exterior rear, each room, roof, any damage<br>
+                    · Good lighting = better material &amp; finish detection<br>
+                    · Add a photo with a ruler or known object for scale reference
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header"><span class="panel-title">02 — Analysis Parameters</span></div>
+              <div style="padding:14px;display:flex;flex-direction:column;gap:12px;">
+                <div class="form-grid">
+                  <div class="form-group"><label>Project Type</label>
+                    <select id="bp-cfg-type">
+                      <option value="residential_renovation">Residential Renovation</option>
+                      <option value="new_build">New Build</option>
+                      <option value="bathroom">Bathroom Remodel</option>
+                      <option value="kitchen">Kitchen Remodel</option>
+                      <option value="extension">Home Extension</option>
+                      <option value="commercial">Commercial Fitout</option>
+                      <option value="roofing">Roofing</option>
+                      <option value="outdoor">Outdoor / Deck / Patio</option>
+                    </select>
+                  </div>
+                  <div class="form-group"><label>Location / Region</label>
+                    <select id="bp-cfg-region">
+                      <option value="gauteng">Gauteng, SA</option>
+                      <option value="cape_town">Cape Town, SA</option>
+                      <option value="durban">Durban, SA</option>
+                      <option value="other_sa">Other SA</option>
+                    </select>
+                  </div>
+                  <div class="form-group"><label>Finish Quality</label>
+                    <select id="bp-cfg-quality">
+                      <option value="budget">Budget / Standard</option>
+                      <option value="mid" selected>Mid-Range</option>
+                      <option value="premium">Premium</option>
+                      <option value="luxury">Luxury / High-End</option>
+                    </select>
+                  </div>
+                  <div class="form-group"><label>Labour Rate</label>
+                    <select id="bp-cfg-labour">
+                      <option value="low">Economy (R300–400/day)</option>
+                      <option value="mid" selected>Standard (R500–700/day)</option>
+                      <option value="high">Skilled (R700–1000/day)</option>
+                    </select>
+                  </div>
+                  <div class="form-group"><label>Scale (if known)</label><input type="text" id="bp-cfg-scale" placeholder="e.g. 1:100, or leave blank"></div>
+                  <div class="form-group"><label>Floor Area (m²)</label><input type="number" id="bp-cfg-area" placeholder="Auto-detect if blank"></div>
+                </div>
+                <div class="form-group">
+                  <label>Additional Notes / Scope</label>
+                  <textarea id="bp-cfg-notes" placeholder="e.g. Include new electrical board, client wants underfloor heating in main bathroom..."></textarea>
+                </div>
+                <button id="bp-analyze-btn" onclick="bpRunAnalysis()" style="width:100%;background:var(--accent);color:var(--bg);border:none;padding:13px;font-family:var(--fd);font-size:22px;letter-spacing:2px;cursor:pointer;transition:all .2s;position:relative;overflow:hidden;">
+                  <div id="bp-shimmer" style="display:none;position:absolute;top:0;left:-100%;width:60%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.15),transparent);animation:shimmer 1.5s ease-in-out infinite;"></div>
+                  ANALYZE BLUEPRINT
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- RIGHT: RESULTS -->
+          <div id="bp-results-col">
+            <div id="bp-placeholder" style="background:var(--surface);border:1px solid var(--border);padding:48px 24px;text-align:center;">
+              <div style="font-size:40px;margin-bottom:12px;color:var(--text3)">◈</div>
+              <div style="font-family:var(--fd);font-size:22px;letter-spacing:2px;color:var(--text3);margin-bottom:8px;">AWAITING BLUEPRINT</div>
+              <div style="font-family:var(--fm);font-size:10px;color:var(--text3);line-height:2;letter-spacing:1px;">UPLOAD A FLOOR PLAN, PHOTO, OR SITE SKETCH<br>THE AI WILL GENERATE:<br><br>· BILL OF MATERIALS<br>· ITEMIZED COST ESTIMATE<br>· LABOUR &amp; TIMELINE BREAKDOWN<br>· RISK &amp; SCOPE OBSERVATIONS</div>
+            </div>
+
+            <div id="bp-results" style="display:none;">
+              <div class="bp-summary-grid">
+                <div class="bp-summary-card orange"><div style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;margin-bottom:6px;">Total Estimate</div><div class="bp-summary-value" id="bp-res-total" style="color:var(--accent)">—</div><div style="font-family:var(--fm);font-size:9px;color:var(--text3);margin-top:4px;" id="bp-res-range">incl. materials + labour</div></div>
+                <div class="bp-summary-card blue"><div style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;margin-bottom:6px;">Floor Area</div><div class="bp-summary-value" id="bp-res-area" style="color:var(--blue)">—</div><div style="font-family:var(--fm);font-size:9px;color:var(--text3);margin-top:4px;" id="bp-res-rate">detected from blueprint</div></div>
+                <div class="bp-summary-card green"><div style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;margin-bottom:6px;">Est. Duration</div><div class="bp-summary-value" id="bp-res-duration" style="color:var(--green)">—</div><div style="font-family:var(--fm);font-size:9px;color:var(--text3);margin-top:4px;">working days</div></div>
+              </div>
+
+              <div class="panel" style="margin-bottom:10px;">
+                <div class="bp-confidence-bar">
+                  <span style="font-family:var(--fm);font-size:9px;letter-spacing:1px;color:var(--text3);white-space:nowrap;text-transform:uppercase;">AI Confidence</span>
+                  <div class="bp-conf-track"><div class="bp-conf-fill" id="bp-conf-fill"></div></div>
+                  <span class="bp-conf-pct" id="bp-conf-pct">—</span>
+                </div>
+              </div>
+
+              <div class="panel" style="margin-bottom:10px;">
+                <div class="panel-header"><span class="panel-title">⊟ Blueprint Observations</span></div>
+                <div style="padding:12px 14px;" id="bp-observations-list"></div>
+              </div>
+
+              <div class="panel" style="margin-bottom:10px;">
+                <div class="panel-header"><span class="panel-title">⬡ Bill of Materials</span><span style="font-family:var(--fm);font-size:11px;color:var(--accent);" id="bp-bom-total"></span></div>
+                <div style="overflow-x:auto;">
+                  <table style="width:100%;border-collapse:collapse;min-width:520px;">
+                    <thead><tr style="background:var(--surface2);">
+                      <th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px 10px;text-align:left;border-bottom:1px solid var(--border);">ITEM</th>
+                      <th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px 8px;text-align:left;border-bottom:1px solid var(--border);">CAT</th>
+                      <th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px 8px;text-align:right;border-bottom:1px solid var(--border);">QTY</th>
+                      <th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px 8px;text-align:right;border-bottom:1px solid var(--border);">UNIT</th>
+                      <th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px 8px;text-align:right;border-bottom:1px solid var(--border);">UNIT COST</th>
+                      <th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px 8px;text-align:right;border-bottom:1px solid var(--border);">TOTAL</th>
+                    </tr></thead>
+                    <tbody id="bp-bom-body"></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="panel" style="margin-bottom:10px;">
+                <div class="panel-header"><span class="panel-title">◈ Labour Breakdown</span><span style="font-family:var(--fm);font-size:11px;color:var(--accent);" id="bp-labour-total"></span></div>
+                <div style="overflow-x:auto;">
+                  <table style="width:100%;border-collapse:collapse;min-width:400px;">
+                    <thead><tr style="background:var(--surface2);">
+                      <th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px 10px;text-align:left;border-bottom:1px solid var(--border);">TRADE / TASK</th>
+                      <th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px 8px;text-align:right;border-bottom:1px solid var(--border);">DAYS</th>
+                      <th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px 8px;text-align:right;border-bottom:1px solid var(--border);">WORKERS</th>
+                      <th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px 8px;text-align:right;border-bottom:1px solid var(--border);">RATE/DAY</th>
+                      <th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px 8px;text-align:right;border-bottom:1px solid var(--border);">TOTAL</th>
+                    </tr></thead>
+                    <tbody id="bp-labour-body"></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="panel" style="margin-bottom:10px;">
+                <div class="panel-header"><span class="panel-title">◻ Cost Estimate Summary</span></div>
+                <div id="bp-estimate-rows"></div>
+              </div>
+
+              <div class="panel" style="margin-bottom:10px;">
+                <div class="panel-header"><span class="panel-title">⚠ Risks &amp; Scope Notes</span></div>
+                <div style="padding:12px 14px;" id="bp-risks-list"></div>
+              </div>
+
+              <div style="display:flex;gap:8px;">
+                <button onclick="bpSaveAsQuote()" style="flex:1;background:var(--accent);color:var(--bg);border:none;padding:11px;font-family:var(--fd);font-size:18px;letter-spacing:1px;cursor:pointer;">⊕ SAVE AS QUOTE</button>
+                <button onclick="bpAddToInventory()" style="flex:1;background:var(--surface2);color:var(--text);border:1px solid var(--border);padding:11px;font-family:var(--fd);font-size:18px;letter-spacing:1px;cursor:pointer;">+ ADD BOM TO INVENTORY</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div>
+  </div>
+</div>
+
+<!-- BLUEPRINT AI LOADING OVERLAY -->
+<div class="bp-loading-overlay" id="bp-loading-overlay">
+  <div class="bp-loading-title">ANALYZING BLUEPRINT</div>
+  <div class="bp-progress-track"><div class="bp-progress-fill" id="bp-loading-progress"></div></div>
+  <div class="bp-loading-steps">
+    <div class="bp-loading-step" id="bp-step-1"><div class="bp-step-dot"></div><span>Sending image to Claude Vision AI</span></div>
+    <div class="bp-loading-step" id="bp-step-2"><div class="bp-step-dot"></div><span>Detecting dimensions &amp; room elements</span></div>
+    <div class="bp-loading-step" id="bp-step-3"><div class="bp-step-dot"></div><span>Calculating Bill of Materials</span></div>
+    <div class="bp-loading-step" id="bp-step-4"><div class="bp-step-dot"></div><span>Pricing against regional rates</span></div>
+    <div class="bp-loading-step" id="bp-step-5"><div class="bp-step-dot"></div><span>Estimating labour &amp; timeline</span></div>
+    <div class="bp-loading-step" id="bp-step-6"><div class="bp-step-dot"></div><span>Generating scope observations</span></div>
   </div>
 </div>
 
