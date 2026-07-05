@@ -416,6 +416,7 @@ select option{background:var(--surface2);}
       <div class="nav-item" onclick="navigate('projects')"><span class="nav-icon">⬡</span>Projects<span class="nav-badge" id="active-project-count">0</span></div>
       <div class="nav-item" onclick="navigate('schedule')"><span class="nav-icon">⊟</span>Schedule</div>
       <div class="nav-item" onclick="navigate('jobs')"><span class="nav-icon">⚒</span>Job Tickets</div>
+      <div class="nav-item" onclick="navigate('jobcards')" style="color:#3fc9c0"><span class="nav-icon">✎</span>Job Cards<span class="nav-badge" id="jobcards-pending-badge" style="display:none;background:#3fc9c0">0</span></div>
     </div>
     <div class="nav-section">
       <div class="nav-label">Finance</div>
@@ -536,6 +537,27 @@ select option{background:var(--surface2);}
         <div class="panel">
           <div class="table-scroll"><table class="data-table"><thead><tr><th>Ticket</th><th>Task</th><th>Project</th><th>Assigned</th><th>Priority</th><th>Due</th><th>Status</th><th>Actions</th></tr></thead><tbody id="jobs-body"></tbody></table></div>
           <div class="card-list" id="jobs-cards"></div>
+        </div>
+      </div>
+
+      <!-- JOB CARDS -->
+      <div class="page" id="page-jobcards">
+        <div style="background:linear-gradient(135deg,rgba(63,201,192,.1),rgba(63,201,192,.04));border:1px solid rgba(63,201,192,.3);padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;gap:12px;">
+          <span style="font-size:24px;color:#3fc9c0;">✎</span>
+          <div>
+            <div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:#3fc9c0;text-transform:uppercase;margin-bottom:2px;">Client Sign-Off — Job Cards</div>
+            <div style="font-size:12px;color:var(--text2)">Pre-filled from the approved quote. Any extra work is raised as a Variation Order and approved by the client before it's added — never bundled into final sign-off.</div>
+          </div>
+        </div>
+        <div class="search-bar">
+          <input class="search-input" type="text" placeholder="Search job cards..." oninput="filterTable('jobcards-body',this.value)">
+          <button class="filter-btn active" onclick="filterJobCards('all',this)">All</button>
+          <button class="filter-btn" onclick="filterJobCards('draft',this)">Draft</button>
+          <button class="filter-btn" onclick="filterJobCards('signed',this)">Signed</button>
+        </div>
+        <div class="panel">
+          <div class="table-scroll"><table class="data-table"><thead><tr><th>Card #</th><th>Project</th><th>Client</th><th>Completed By</th><th>Total</th><th>Date</th><th>Status</th><th>Actions</th></tr></thead><tbody id="jobcards-body"></tbody></table></div>
+          <div class="card-list" id="jobcards-cards"></div>
         </div>
       </div>
 

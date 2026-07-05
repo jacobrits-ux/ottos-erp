@@ -79,6 +79,88 @@ if (!Array.isArray(store.timeSessions)) store.timeSessions = [];
 // Call after any change to persist it
 function save() { saveStore(store); }
 
+// ══════════════════════════════════════════════════════
+// ── JOB CARDS & VARIATION ORDERS — own collections/own storage keys ──
+// Deliberately NOT part of `store`/`erp/store` — that document is shared,
+// whole-blob-synced, and Firestore caps a document at 1MB. Signatures and a
+// growing history of job cards would eventually blow that ceiling and take
+// the entire live sync down, not just this feature. Same reasoning as why
+// clientForms/clientPortal are already separate collections.
+// ══════════════════════════════════════════════════════
+const JOBCARDS_KEY    = 'ottos_erp_jobcards_v1';
+const VARIATIONS_KEY  = 'ottos_erp_variations_v1';
+
+function loadJobCards() {
+  try { const s = localStorage.getItem(JOBCARDS_KEY); if (s) { const p = JSON.parse(s); if (Array.isArray(p)) return p; } } catch(e) {}
+  return [];
+}
+function saveJobCardsLocal() { try { localStorage.setItem(JOBCARDS_KEY, JSON.stringify(jobCards)); } catch(e) {} }
+
+function loadVariationOrders() {
+  try { const s = localStorage.getItem(VARIATIONS_KEY); if (s) { const p = JSON.parse(s); if (Array.isArray(p)) return p; } } catch(e) {}
+  return [];
+}
+function saveVariationOrdersLocal() { try { localStorage.setItem(VARIATIONS_KEY, JSON.stringify(variationOrders)); } catch(e) {} }
+
+let jobCards = loadJobCards();
+let variationOrders = loadVariationOrders();
+
+function saveJobCard(jc) {
+  const idx = jobCards.findIndex(j => j.id === jc.id);
+  if (idx !== -1) jobCards[idx] = jc; else jobCards.unshift(jc);
+  saveJobCardsLocal();
+  if (syncEnabled && db) db.collection('jobCards').doc(jc.id).set({ ...jc, _dev: DEVICE_ID }).catch(err => console.warn('Job card sync failed:', err));
+}
+function saveVariationOrder(vo) {
+  const idx = variationOrders.findIndex(v => v.id === vo.id);
+  if (idx !== -1) variationOrders[idx] = vo; else variationOrders.unshift(vo);
+  saveVariationOrdersLocal();
+  if (syncEnabled && db) db.collection('variationOrders').doc(vo.id).set({ ...vo, _dev: DEVICE_ID }).catch(err => console.warn('Variation order sync failed:', err));
+}
+
+// ── Shared GPS capture (mirrors Time Tracking's clock-in pattern) ──
+async function captureGPS() {
+  if (!navigator.geolocation) return { lat: null, lng: null, address: 'GPS not supported on this device' };
+  try {
+    const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 8000, maximumAge: 0 }));
+    const lat = pos.coords.latitude.toFixed(6), lng = pos.coords.longitude.toFixed(6);
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=16`, { headers: { 'Accept-Language': 'en' } });
+      const geo = await r.json();
+      return { lat, lng, address: geo.display_name ? geo.display_name.split(',').slice(0,3).join(', ') : `${lat}, ${lng}` };
+    } catch { return { lat, lng, address: `${lat}, ${lng}` }; }
+  } catch(e) { return { lat: null, lng: null, address: 'Location unavailable — permission denied or GPS off' }; }
+}
+
+// ── Reusable canvas signature pad — no external library ──
+function initSignaturePad(canvasId) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return null;
+  const ctx = canvas.getContext && canvas.getContext('2d');
+  if (!ctx) { canvas._hasContent = () => false; canvas._clear = () => {}; canvas._toDataURL = () => ''; return canvas; }
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = Math.max(1, rect.width * dpr);
+  canvas.height = Math.max(1, rect.height * dpr);
+  ctx.scale(dpr, dpr);
+  ctx.strokeStyle = '#1a1200'; ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  let drawing = false, hasContent = false;
+  const pos = e => { const r = canvas.getBoundingClientRect(); const t = e.touches ? e.touches[0] : e; return { x: t.clientX - r.left, y: t.clientY - r.top }; };
+  const start = e => { e.preventDefault(); drawing = true; hasContent = true; const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); };
+  const move  = e => { if (!drawing) return; e.preventDefault(); const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); };
+  const end   = () => { drawing = false; };
+  canvas.addEventListener('mousedown', start);
+  canvas.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+  canvas.addEventListener('touchstart', start, { passive:false });
+  canvas.addEventListener('touchmove', move, { passive:false });
+  canvas.addEventListener('touchend', end);
+  canvas._hasContent = () => hasContent;
+  canvas._clear = () => { ctx.clearRect(0, 0, canvas.width, canvas.height); hasContent = false; };
+  canvas._toDataURL = () => canvas.toDataURL('image/png');
+  return canvas;
+}
+
 let currentPage = 'dashboard';
 let currentFilter = 'all';
 
@@ -149,6 +231,48 @@ function initFirebase() {
         try { applyPortalActions(change.doc.id, JSON.parse(d.actions)); } catch(e) { console.warn('Portal action parse error:', e); }
       });
     }, err => console.warn('ClientPortal listener:', err));
+
+    // ── Job Cards — own collection, not nested in erp/store (avoids 1MB single-doc ceiling) ──
+    db.collection('jobCards').onSnapshot(snapshot => {
+      let changed = false;
+      snapshot.docChanges().forEach(change => {
+        if (change.doc.metadata.hasPendingWrites) return; // skip our own optimistic write
+        const data = change.doc.data();
+        const idx = jobCards.findIndex(j => j.id === data.id);
+        if (change.type === 'removed') { if (idx !== -1) { jobCards.splice(idx,1); changed = true; } }
+        else { if (idx !== -1) jobCards[idx] = data; else jobCards.unshift(data); changed = true; }
+      });
+      if (changed) {
+        saveJobCardsLocal();
+        if (currentPage === 'jobcards') renderJobCards();
+        updateJobCardBadge();
+      }
+    }, err => console.warn('JobCards listener:', err));
+
+    // ── Variation Orders — own collection, remote portal approvals sync back here ──
+    db.collection('variationOrders').onSnapshot(snapshot => {
+      let changed = false;
+      snapshot.docChanges().forEach(change => {
+        if (change.doc.metadata.hasPendingWrites) return;
+        const data = change.doc.data();
+        const idx = variationOrders.findIndex(v => v.id === data.id);
+        const prevStatus = idx !== -1 ? variationOrders[idx].status : null;
+        if (change.type === 'removed') { if (idx !== -1) { variationOrders.splice(idx,1); changed = true; } }
+        else {
+          if (idx !== -1) variationOrders[idx] = data; else variationOrders.unshift(data);
+          changed = true;
+          if (prevStatus === 'pending' && (data.status === 'approved' || data.status === 'declined')) {
+            toast(`🔔 Client ${data.status} variation ${data.id}`);
+            store.activity.unshift({ text: `Variation ${data.id} ${data.status} by client via Client Portal`, time: 'Just now', type: data.status === 'approved' ? 'green' : 'red' });
+            save();
+          }
+        }
+      });
+      if (changed) {
+        saveVariationOrdersLocal();
+        if (currentPage === 'jobcards') renderJobCards();
+      }
+    }, err => console.warn('VariationOrders listener:', err));
 
     syncEnabled = true;
     updateSyncIndicator('synced');
@@ -292,21 +416,50 @@ function syncClientPortal(clientName) {
     id: i.id, project: i.project, amount: i.amount, issued: i.issued, due: i.due, status: i.status,
     lines: (i.lines || []).map(l => ({ desc: l.desc, qty: l.qty, unit: l.unit, lineTotal: l.lineTotal }))
   }));
+  // Only variations still awaiting the client, or resolved via the portal itself — in-person
+  // approvals stay off the portal entirely, nothing for the client to review remotely.
+  const variations = variationOrders.filter(v => v.client === clientName && v.approvalMethod === 'portal').map(v => ({
+    id: v.id, project: v.project, description: v.description, amount: v.amount, status: v.status,
+    createdAt: v.createdAt, lines: (v.lines || []).map(l => ({ desc: l.desc, qty: l.qty, unit: l.unit, lineTotal: l.lineTotal }))
+  }));
 
-  const payload = { clientName, clientType: client.type || '', projects, quotes, invoices, generatedAt: new Date().toISOString() };
+  const payload = { clientName, clientType: client.type || '', projects, quotes, invoices, variations, generatedAt: new Date().toISOString() };
   db.collection('clientPortal').doc(client.portalToken)
     .set({ data: JSON.stringify(payload), _dev: DEVICE_ID }, { merge: true })
     .catch(err => console.warn('Portal sync failed:', err));
 }
 
-// Apply a quote decision the client made on the portal (approve/decline) back into the live store.
+// Apply a quote or variation decision the client made on the portal back into the live store.
+// Variation action keys are namespaced 'vo:VO-xxx' to disambiguate from quote IDs sharing the object.
 let processedPortalActionKeys = new Set();
 function applyPortalActions(token, actionsObj) {
   if (!actionsObj) return;
-  Object.entries(actionsObj).forEach(([quoteId, act]) => {
-    const key = token + ':' + quoteId + ':' + act.at;
-    if (processedPortalActionKeys.has(key)) return;
-    processedPortalActionKeys.add(key);
+  Object.entries(actionsObj).forEach(([key, act]) => {
+    const dedupeKey = token + ':' + key + ':' + act.at;
+    if (processedPortalActionKeys.has(dedupeKey)) return;
+    processedPortalActionKeys.add(dedupeKey);
+
+    if (key.startsWith('vo:')) {
+      const voId = key.slice(3);
+      const vi = variationOrders.findIndex(v => v.id === voId);
+      if (vi === -1) return;
+      const newStatus = act.action === 'approved' ? 'approved' : 'declined';
+      if (variationOrders[vi].status !== newStatus) {
+        variationOrders[vi].status = newStatus;
+        variationOrders[vi].approvedAt = new Date().toISOString();
+        saveVariationOrdersLocal();
+        if (newStatus === 'approved') deductMaterialStock(variationOrders[vi].lines);
+        store.activity.unshift({ text: `Variation ${voId} ${newStatus} by client via Client Portal — ${fmt(variationOrders[vi].amount)}`, time: 'Just now', type: newStatus === 'approved' ? 'green' : 'red' });
+        save();
+        if (currentPage === 'jobcards') renderJobCards();
+        updateJobCardBadge();
+        toast(`🔔 Client ${newStatus} variation ${voId}`);
+        syncClientPortal(variationOrders[vi].client);
+      }
+      return;
+    }
+
+    const quoteId = key;
     const qi = store.quotes.findIndex(q => q.id === quoteId);
     if (qi === -1) return;
     const newStatus = act.action === 'approved' ? 'approved' : 'declined';
@@ -693,10 +846,10 @@ function navigate(page) {
   if (pageEl) pageEl.classList.add('active');
   currentPage = page;
 
-  const titles = { dashboard:'Dashboard', projects:'Projects', schedule:'Schedule', jobs:'Job Tickets', quotes:'Quotes', invoices:'Invoices', expenses:'Expenses', clients:'Clients', crew:'Crew & Workers', materials:'Materials Inventory', reports:'Reports', scanner:'Scan Supplier Invoice', describe:'Describe Project → BOM', timetrack:'GPS Time Tracking', blueprint:'Blueprint & Photo Analyzer' };
+  const titles = { dashboard:'Dashboard', projects:'Projects', schedule:'Schedule', jobs:'Job Tickets', jobcards:'Job Cards', quotes:'Quotes', invoices:'Invoices', expenses:'Expenses', clients:'Clients', crew:'Crew & Workers', materials:'Materials Inventory', reports:'Reports', scanner:'Scan Supplier Invoice', describe:'Describe Project → BOM', timetrack:'GPS Time Tracking', blueprint:'Blueprint & Photo Analyzer' };
   const buttons = {
     dashboard:{ primary:'+ NEW PROJECT', secondary:null }, projects:{ primary:'+ NEW PROJECT', secondary:'EXPORT' },
-    jobs:{ primary:'+ NEW TICKET', secondary:null }, quotes:{ primary:'+ NEW QUOTE', secondary:'EXPORT' },
+    jobs:{ primary:'+ NEW TICKET', secondary:null }, jobcards:{ primary:'+ NEW JOB CARD', secondary:null }, quotes:{ primary:'+ NEW QUOTE', secondary:'EXPORT' },
     invoices:{ primary:'+ NEW INVOICE', secondary:'EXPORT' }, expenses:{ primary:'+ LOG EXPENSE', secondary:null },
     clients:{ primary:'+ NEW CLIENT', secondary:null }, crew:{ primary:'+ ADD WORKER', secondary:null },
     materials:{ primary:'+ ADD ITEM', secondary:null }, schedule:{ primary:'+ ASSIGN', secondary:null },
@@ -715,7 +868,7 @@ function navigate(page) {
 }
 
 function renderPage(p) {
-  const fn = { dashboard:renderDashboard, projects:renderProjects, schedule:renderSchedule, jobs:renderJobs, quotes:renderQuotes, invoices:renderInvoices, expenses:renderExpenses, clients:renderClients, crew:renderCrew, materials:renderMaterials, reports:renderReports, scanner:renderScanner, describe:renderDescribe, timetrack:renderTimeTrack, blueprint:renderBlueprint };
+  const fn = { dashboard:renderDashboard, projects:renderProjects, schedule:renderSchedule, jobs:renderJobs, jobcards:renderJobCards, quotes:renderQuotes, invoices:renderInvoices, expenses:renderExpenses, clients:renderClients, crew:renderCrew, materials:renderMaterials, reports:renderReports, scanner:renderScanner, describe:renderDescribe, timetrack:renderTimeTrack, blueprint:renderBlueprint };
   if (fn[p]) fn[p]();
 }
 
@@ -738,6 +891,36 @@ function toast(msg) {
 function statusBadge(s) {
   const m = { active:'badge-blue', completed:'badge-green', 'on-hold':'badge-gray', paid:'badge-green', overdue:'badge-red', sent:'badge-yellow', draft:'badge-gray', approved:'badge-green', pending:'badge-yellow', declined:'badge-red', 'in-progress':'badge-blue', done:'badge-green', open:'badge-gray', 'on-site':'badge-green', available:'badge-yellow', leave:'badge-gray', high:'badge-red', medium:'badge-yellow', low:'badge-gray', Materials:'badge-blue', Labour:'badge-purple', Other:'badge-gray', credit:'badge-purple' };
   return `<span class="badge ${m[s]||'badge-gray'}">${s}</span>`;
+}
+
+// ── Client-first, project-optional: shared across Quotes / Invoices / Job Cards ──
+// Given a client name, returns <option> HTML for that client's open (active/on-hold)
+// projects, with a "No Project / Standalone" option first. Used any time a form needs
+// to filter projects to the selected client instead of showing every project in the system.
+function clientProjectOptions(clientName, selectedId) {
+  const noProj = `<option value="" ${!selectedId?'selected':''}>— No Project / Standalone —</option>`;
+  if (!clientName) return noProj;
+  const opts = store.projects.filter(p => p.client === clientName && (p.status === 'active' || p.status === 'on-hold'))
+    .map(p => `<option value="${p.id}" ${selectedId===p.id?'selected':''}>${p.id} — ${p.name}</option>`).join('');
+  return noProj + opts;
+}
+
+// Deducts stock for any line that has a linked materialId — used at the point work is
+// actually considered done (Job Card sign-off, Variation Order approval), not at quote
+// time, since a quote is an estimate and hasn't consumed anything yet.
+function deductMaterialStock(lines) {
+  (lines || []).forEach(l => {
+    if (!l.materialId) return;
+    const m = store.materials.find(mat => String(mat.id) === String(l.materialId));
+    if (m) m.stock = Math.max(0, (m.stock || 0) - (l.qty || 0));
+  });
+}
+
+// Material-link <select> fragment reused by both the standalone Job Card line editor
+// and the Variation Order line editor — one component, two call sites.
+function materialLinkOptions(selectedId) {
+  return `<option value="">— Freetext (no stock link) —</option>` +
+    store.materials.map(m => `<option value="${m.id}" ${String(selectedId)===String(m.id)?'selected':''}>${m.name} (${m.stock} ${m.unit} in stock)</option>`).join('');
 }
 
 // ── MOBILE CARD RENDERERS ──
@@ -790,7 +973,7 @@ function renderInvoiceCards(arr) {
   }).join('');
 }
 
-function renderJobCards(arr) {
+function renderJobTicketCards(arr) {
   const el = document.getElementById('jobs-cards');
   if (!el) return;
   el.innerHTML = arr.map((j, i) => `
@@ -1129,7 +1312,7 @@ function renderJobs() {
       <td>${statusBadge(j.priority)}</td><td class="mono">${dt(j.due)}</td><td>${statusBadge(j.status)}</td>
       <td><button class="action-btn" onclick="toggleJobStatus(${i})">Toggle</button> <button class="action-btn danger" onclick="deleteItem('jobs',${i})">Del</button></td>
     </tr>`).join('');
-  renderJobCards(store.jobs);
+  renderJobTicketCards(store.jobs);
 }
 
 function renderQuotes() {
@@ -1442,6 +1625,7 @@ function handlePrimary() {
     describe: () => document.getElementById('desc-text').focus(),
     timetrack: showManualTimeEntry,
     blueprint: () => document.getElementById('bp-file-input').click(),
+    jobcards: showNewJobCard,
   };
   (m[currentPage] || (() => toast('Coming soon')))();
 }
@@ -1530,15 +1714,14 @@ function openInvoiceModal(title, inv) {
     `<option value="${s}" ${isEdit && inv.status===s?'selected':''}>${s.charAt(0).toUpperCase()+s.slice(1)}</option>`
   ).join('');
   const clientOpts = store.clients.map(c =>
-    `<option ${isEdit && inv.client===c.name?'selected':''}>${c.name}</option>`
-  ).join('') || '<option>New Client</option>';
-  const projOpts = store.projects.map(p =>
-    `<option value="${p.id}" ${isEdit && inv.project===p.id?'selected':''}>${p.id} — ${p.name}</option>`
-  ).join('');
+    `<option value="${c.name}" ${isEdit && inv.client===c.name?'selected':''}>${c.name}</option>`
+  ).join('') || '<option value="">New Client</option>';
+  const initialClient = isEdit ? inv.client : (store.clients[0] ? store.clients[0].name : '');
+  const projOpts = clientProjectOptions(initialClient, isEdit ? inv.project : null);
 
   openModal(title, `
     <div class="form-grid" style="margin-bottom:12px;">
-      <div class="form-group"><label>Client</label><select id="f-client">${clientOpts}</select></div>
+      <div class="form-group"><label>Client</label><select id="f-client" onchange="invOnClientChange(this.value)">${clientOpts}</select></div>
       <div class="form-group"><label>Project</label><select id="f-project">${projOpts}</select></div>
       <div class="form-group"><label>Issue Date</label><input type="date" id="f-issued" value="${isEdit ? inv.issued||today : today}"></div>
       <div class="form-group"><label>Due Date</label><input type="date" id="f-due" value="${isEdit ? inv.due||due7 : due7}"></div>
@@ -1579,6 +1762,10 @@ function openInvoiceModal(title, inv) {
   else renderInvoiceLines();
 }
 
+function invOnClientChange(clientName) {
+  const sel = document.getElementById('f-project');
+  if (sel) sel.innerHTML = clientProjectOptions(clientName, null);
+}
 function addInvoiceLine() {
   invoiceLines.push({ desc:'', qty:1, unit:'Job', unitPrice:0, lineTotal:0 });
   renderInvoiceLines();
@@ -1721,10 +1908,17 @@ function openQuoteModal(title, q) {
   const valid30 = new Date(Date.now()+30*24*60*60*1000).toISOString().split('T')[0];
   const pct    = isEdit ? (q.contingencyPct ?? 10) : 10;
   quoteContingency = pct;
+  const knownClient = isEdit && store.clients.some(c => c.name === q.client);
+  const clientOpts = (isEdit && q.client && !knownClient ? `<option value="${q.client}" selected>${q.client} (not in Clients list)</option>` : '')
+    + store.clients.map(c => `<option value="${c.name}" ${isEdit && q.client===c.name?'selected':''}>${c.name}</option>`).join('');
+  const initialClient = isEdit ? q.client : (store.clients[0] ? store.clients[0].name : '');
+  const projOpts = clientProjectOptions(initialClient, isEdit ? q.projectId : null);
+
   openModal(title, `
     <div class="form-grid" style="margin-bottom:12px;">
-      <div class="form-group"><label>Client Name</label><input type="text" id="f-client" placeholder="Client name" value="${isEdit ? q.client : ''}"></div>
-      <div class="form-group"><label>Project / Description</label><input type="text" id="f-desc" placeholder="e.g. Boundary wall — 30m" value="${isEdit ? q.desc : ''}"></div>
+      <div class="form-group"><label>Client</label><select id="f-client" onchange="qtOnClientChange(this.value)">${clientOpts}</select></div>
+      <div class="form-group"><label>Project</label><select id="f-project">${projOpts}</select></div>
+      <div class="form-group full"><label>Description</label><input type="text" id="f-desc" placeholder="e.g. Boundary wall — 30m" value="${isEdit ? q.desc : ''}"></div>
       <div class="form-group"><label>Quote Date</label><input type="date" id="f-date" value="${isEdit ? q.date : today}"></div>
       <div class="form-group"><label>Valid Until</label><input type="date" id="f-valid" value="${isEdit ? q.valid : valid30}"></div>
     </div>
@@ -1827,20 +2021,27 @@ function updateQuoteTotals() {
 
 function _buildQuoteRecord(id, isNew) {
   const client = (document.getElementById('f-client')||{}).value || '';
+  const projectId = (document.getElementById('f-project')||{}).value || '';
   const desc   = (document.getElementById('f-desc')||{}).value   || '';
   const date   = (document.getElementById('f-date')||{}).value   || new Date().toISOString().split('T')[0];
   const valid  = (document.getElementById('f-valid')||{}).value  || '';
   const pct    = quoteContingency;
   const lines  = quoteLines.filter(l => l.desc.trim() || l.cost > 0);
-  if (!client) { alert('Client name required'); return null; }
+  if (!client) { alert('Client required'); return null; }
   if (lines.length === 0) { alert('Add at least one line item'); return null; }
   const subtotal    = lines.reduce((s,l) => s + l.lineTotal, 0);
   const contingency = Math.round(subtotal * pct / 100 * 100) / 100;
   const total       = subtotal + contingency;
-  return { id, client, desc, amount: total, date, valid,
+  const proj = projectId ? store.projects.find(p => p.id === projectId) : null;
+  return { id, client, projectId: projectId || null, projectName: proj ? proj.name : null, desc, amount: total, date, valid,
     status: isNew ? 'pending' : undefined,
     lines: JSON.parse(JSON.stringify(lines)),
     subtotal, contingency, contingencyPct: pct };
+}
+
+function qtOnClientChange(clientName) {
+  const sel = document.getElementById('f-project');
+  if (sel) sel.innerHTML = clientProjectOptions(clientName, null);
 }
 
 function saveNewQuote() {
@@ -3839,6 +4040,589 @@ function bpAddToInventory() {
   save();
   toast(`✓ ${added} items added, ${updated} updated in inventory`);
   setTimeout(() => navigate('materials'), 1200);
+}
+
+// ══════════════════════════════════════════════════════
+// ── JOB CARDS & VARIATION ORDERS ──
+// Flow is deliberately split across separate modals rather than one reactive
+// screen: once a signature canvas exists it must never be re-rendered (that
+// would erase whatever the client just drew), so each stage that needs a
+// canvas gets its own modal, opened fresh, never rebuilt in place.
+//   Setup modal      → project/scope/completed-by + raise variations (no canvas)
+//   Raise Variation   → lines + portal-or-in-person choice (no canvas)
+//   Variation Sign     → in-person approval signature only (fresh canvas)
+//   Job Card Sign-Off → final signature, gated on zero pending variations
+// ══════════════════════════════════════════════════════
+
+let jcDraft = null;       // in-memory until final sign-off — see note below
+let jcSigCanvas = null;
+let jcVoDraft = null;     // in-progress variation being raised
+let jcVoSigCanvas = null;
+
+// NOTE ON PERSISTENCE: jcDraft only gets written to jobCards/Firestore once
+// actually signed — same "nothing saved until Create" behaviour as every
+// other modal in this app. Variation Orders are different: they're saved
+// immediately on raising (portal-pending or in-person-approved) because a
+// variation is a real business event on its own — a client approving extra
+// tiling work shouldn't vanish because the job card itself hasn't been
+// signed off yet. They carry jobCardId as a forward reference to jcDraft.id.
+
+function jcNewId() { return 'JC-' + new Date().getFullYear() + '-' + String(jobCards.length + 1).padStart(3,'0'); }
+function voNewId() { return 'VO-' + new Date().getFullYear() + '-' + String(variationOrders.length + 1).padStart(3,'0'); }
+
+function jcLinkedVariations(jcId) { return variationOrders.filter(v => v.jobCardId === jcId); }
+function jcPendingCount(jcId) { return jcLinkedVariations(jcId).filter(v => v.status === 'pending').length; }
+function jcApprovedTotal(jcId) { return jcLinkedVariations(jcId).filter(v => v.status === 'approved').reduce((s,v) => s + v.amount, 0); }
+function jcOriginalTotal() { return (jcDraft.originalLines || []).reduce((s,l) => s + (l.lineTotal||0), 0); }
+function jcGrandTotal() { return jcOriginalTotal() + jcApprovedTotal(jcDraft.id); }
+
+// ── LIST PAGE ──
+function updateJobCardBadge() {
+  const pending = variationOrders.filter(v => v.status === 'pending').length;
+  const badge = document.getElementById('jobcards-pending-badge');
+  if (badge) { badge.textContent = pending; badge.style.display = pending > 0 ? '' : 'none'; }
+}
+
+function renderJobCards() {
+  updateJobCardBadge();
+  const rows = jobCards.map((jc, i) => {
+    const pendingOnCard = jcLinkedVariations(jc.id).filter(v => v.status === 'pending').length;
+    const unbilled = jc.status === 'signed' && jc.billed === false;
+    return `<tr>
+      <td class="mono">${jc.id}${pendingOnCard ? `<div style="font-family:var(--fm);font-size:9px;color:var(--accent);margin-top:2px;">⏳ ${pendingOnCard} variation pending</div>` : ''}</td>
+      <td>${jc.project || '<span style="color:var(--text3)">— Standalone —</span>'}</td>
+      <td>${jc.client}</td>
+      <td>${jc.completedBy}${jc.completedByType==='owner' ? ' <span class="badge badge-blue" style="font-size:8px">OWNER</span>' : ''}</td>
+      <td style="font-family:var(--fm);color:var(--accent)">${fmt(jc.total)}</td>
+      <td class="mono">${dt(jc.date)}</td>
+      <td>${statusBadge(jc.status)}${unbilled ? ' <span class="badge badge-yellow" style="font-size:8px">UNBILLED</span>' : ''}</td>
+      <td style="white-space:nowrap">
+        <button class="action-btn" onclick="jcPreviewDoc('${jc.id}')">⬇ PDF</button>
+        ${jc.linkedInvoiceId ? `<span style="font-family:var(--fm);font-size:9px;color:var(--text3)">→ ${jc.linkedInvoiceId}</span>`
+          : unbilled ? `<button class="action-btn" onclick="jcOpenCombineInvoice('${jc.projectId}','${jc.id}')" style="color:var(--green);border-color:var(--green)">→ Combine &amp; Invoice</button>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+  document.getElementById('jobcards-body').innerHTML = rows || `<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text3);font-family:var(--fm);font-size:11px;">NO JOB CARDS YET — TAP + NEW JOB CARD TO BEGIN</td></tr>`;
+
+  const cardsEl = document.getElementById('jobcards-cards');
+  if (cardsEl) cardsEl.innerHTML = jobCards.map(jc => {
+    const pendingOnCard = jcLinkedVariations(jc.id).filter(v => v.status === 'pending').length;
+    const unbilled = jc.status === 'signed' && jc.billed === false;
+    return `<div class="card-item">
+      <div class="card-item-header"><div><div class="card-item-title">${jc.project || 'Standalone'}</div><div class="card-item-id">${jc.id}</div></div>${statusBadge(jc.status)}</div>
+      <div class="card-item-row"><span style="color:var(--text3)">Client</span><span>${jc.client}</span></div>
+      <div class="card-item-row"><span style="color:var(--text3)">Completed By</span><span>${jc.completedBy}</span></div>
+      <div class="card-item-row"><span style="color:var(--text3)">Total</span><span style="font-family:var(--fm);color:var(--accent)">${fmt(jc.total)}</span></div>
+      ${pendingOnCard ? `<div class="card-item-row"><span style="color:var(--accent)">⏳ Pending</span><span>${pendingOnCard} variation(s)</span></div>` : ''}
+      ${unbilled ? `<div class="card-item-row"><span style="color:var(--accent)">Status</span><span class="badge badge-yellow">UNBILLED</span></div>` : ''}
+      <div class="card-item-actions">
+        <button class="action-btn" onclick="jcPreviewDoc('${jc.id}')">⬇ PDF</button>
+        ${jc.linkedInvoiceId ? `<span style="font-family:var(--fm);font-size:9px;color:var(--text3)">→ ${jc.linkedInvoiceId}</span>`
+          : unbilled ? `<button class="action-btn" onclick="jcOpenCombineInvoice('${jc.projectId}','${jc.id}')" style="color:var(--green);border-color:var(--green)">→ Combine &amp; Invoice</button>` : ''}
+      </div>
+    </div>`;
+  }).join('') || `<div style="text-align:center;padding:24px;color:var(--text3);font-family:var(--fm);font-size:11px">NO JOB CARDS YET</div>`;
+}
+
+function filterJobCards(status, btn) {
+  document.querySelectorAll('#page-jobcards .filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('#jobcards-body tr').forEach(r => {
+    if (status === 'all') { r.style.display = ''; return; }
+    r.style.display = r.textContent.toLowerCase().includes(status) ? '' : 'none';
+  });
+}
+
+// ── STAGE 1: SETUP ──
+function showNewJobCard() {
+  openModal('NEW JOB CARD', jcChooserHTML());
+}
+
+function jcChooserHTML() {
+  return `
+    <div style="font-size:13px;color:var(--text2);margin-bottom:16px;">Is this completing work already quoted, or a standalone job — a callout, a repair, something with no quote behind it?</div>
+    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px;">
+      <button class="topbar-btn" onclick="jcStartFromQuote()" style="padding:16px;font-size:16px;">📋 FROM EXISTING QUOTE</button>
+      <button class="topbar-btn secondary" onclick="jcStartStandalone()" style="padding:16px;font-size:16px;">⚡ STANDALONE / CALLOUT JOB</button>
+    </div>
+    <div class="form-actions"><button class="topbar-btn secondary" onclick="closeModalDirect()">CANCEL</button></div>`;
+}
+function jcInitDraft(mode) {
+  jcDraft = {
+    id: jcNewId(), mode,
+    projectId: '', project: '', client: '',
+    completedBy: '', completedByType: '',
+    scope: '', date: new Date().toISOString().split('T')[0], createdAt: new Date().toISOString(),
+    gps: null, signature: null, signedByName: '',
+    status: 'draft', linkedInvoiceId: null, billed: null, quoteId: null, originalLines: [], total: 0,
+  };
+}
+function jcStartFromQuote()  { jcInitDraft('from_quote');  openModal(jcModalTitle(), jcSetupHTML()); }
+function jcStartStandalone() { jcInitDraft('standalone'); jcDraft.originalLines = [{desc:'',qty:1,unit:'Job',unitPrice:0,lineTotal:0,materialId:''},{desc:'',qty:1,unit:'Job',unitPrice:0,lineTotal:0,materialId:''}]; openModal(jcModalTitle(), jcSetupHTML()); }
+function jcModalTitle() { return (jcDraft.mode==='standalone' ? 'NEW JOB CARD (STANDALONE) — ' : 'NEW JOB CARD — ') + jcDraft.id; }
+
+function jcSetupHTML() {
+  const clientOpts = `<option value="">— Select —</option>` + store.clients.map(c => `<option value="${c.name}" ${jcDraft.client===c.name?'selected':''}>${c.name}</option>`).join('');
+  const projOpts = clientProjectOptions(jcDraft.client, jcDraft.projectId);
+  const completedByOpts = ['Jaco Brits','Heino v Niekerk', ...store.crew.map(c=>c.name)]
+    .map(n => `<option value="${n}" ${jcDraft.completedBy===n?'selected':''}>${n}</option>`).join('');
+  const variations = jcLinkedVariations(jcDraft.id);
+  const pending = jcPendingCount(jcDraft.id);
+
+  const variationRows = variations.length ? variations.map(v => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px;">
+      <div><span class="mono" style="color:var(--text3)">${v.id}</span> — ${v.description}</div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="font-family:var(--fm);color:${v.status==='approved'?'var(--green)':v.status==='pending'?'var(--accent)':'var(--red)'}">${fmt(v.amount)}</span>
+        ${statusBadge(v.status)}
+      </div>
+    </div>`).join('') : `<div style="padding:12px;text-align:center;color:var(--text3);font-family:var(--fm);font-size:10px;">No variations raised</div>`;
+
+  const scopeSection = jcDraft.mode === 'from_quote' ? `
+    <div style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;margin-bottom:6px;">Original Scope (from approved quote)</div>
+    <div class="panel" style="margin-bottom:10px;">
+      ${jcDraft.originalLines.length ? `<table style="width:100%;border-collapse:collapse;"><tbody>${jcDraft.originalLines.map(l => `<tr><td style="padding:6px 10px;font-size:12px;border-bottom:1px solid var(--border);">${l.desc}</td><td style="padding:6px 10px;text-align:right;font-family:var(--fm);font-size:12px;border-bottom:1px solid var(--border);">${fmt(l.lineTotal)}</td></tr>`).join('')}</tbody></table>`
+      : `<div style="padding:14px;text-align:center;color:var(--text3);font-family:var(--fm);font-size:10px;">${jcDraft.client ? 'No approved quote found for this client' + (jcDraft.projectId?' / project':'') + '. Cancel and use Standalone instead, or approve a quote first.' : 'Select a client to pull their approved quote'}</div>`}
+    </div>`
+    : jcStandaloneLinesHTML();
+
+  return `
+    <div class="form-grid" style="margin-bottom:12px;">
+      <div class="form-group"><label>Client</label><select id="jc-client" onchange="jcOnClientSelect(this.value)">${clientOpts}</select></div>
+      <div class="form-group"><label>Project <span style="color:var(--text3);text-transform:none;font-weight:400;">(optional)</span></label><select id="jc-project" onchange="jcOnProjectSelect(this.value)">${projOpts}</select></div>
+      <div class="form-group"><label>Completed By</label><select id="jc-completedby" onchange="jcOnCompletedBySelect(this.value)"><option value="">— Select —</option>${completedByOpts}</select></div>
+    </div>
+    <div class="form-group" style="margin-bottom:12px;"><label>Scope of Work Completed</label><textarea id="jc-scope" oninput="jcDraft.scope=this.value" placeholder="Describe what was completed on this visit...">${jcDraft.scope}</textarea></div>
+
+    ${scopeSection}
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <span style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;">Variation Orders</span>
+      <button class="action-btn" onclick="jcOpenRaiseVariation()" style="color:var(--accent);border-color:var(--accent)">+ Raise Variation</button>
+    </div>
+    <div class="panel" style="margin-bottom:12px;">${variationRows}</div>
+
+    <div style="display:flex;flex-direction:column;gap:4px;padding:10px 0;border-top:1px solid var(--border);margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2)"><span>${jcDraft.mode==='from_quote'?'Original Scope':'Job Lines'}</span><span class="mono">${fmt(jcOriginalTotal())}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2)"><span>Approved Variations</span><span class="mono">${fmt(jcApprovedTotal(jcDraft.id))}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:14px;font-weight:600;color:var(--accent)"><span>TOTAL</span><span class="mono">${fmt(jcGrandTotal())}</span></div>
+    </div>
+
+    <div style="font-family:var(--fm);font-size:10px;color:var(--text3);margin-bottom:12px;">${jcDraft.projectId ? '📁 Linked to a project — this card will be marked Unbilled and combined into a progress claim when ready.' : '⚡ No project — signing this card will invoice immediately.'}</div>
+
+    ${pending > 0 ? `<div style="background:rgba(212,168,67,.08);border:1px solid rgba(212,168,67,.3);padding:10px 12px;margin-bottom:12px;font-family:var(--fm);font-size:11px;color:var(--accent);">⏳ ${pending} variation(s) awaiting client approval — sign-off is locked until resolved.</div>` : ''}
+
+    <div class="form-actions">
+      <button class="topbar-btn" onclick="jcContinueToSignOff()" ${pending>0?'disabled style="opacity:.4;cursor:not-allowed;"':''}>CONTINUE TO SIGN-OFF →</button>
+      <button class="topbar-btn secondary" onclick="closeModalDirect()">CANCEL</button>
+    </div>`;
+}
+
+function jcStandaloneLinesHTML() {
+  const lineRows = jcDraft.originalLines.map((l,i) => `
+    <tr>
+      <td style="padding:4px 6px;"><input value="${(l.desc||'').replace(/"/g,'&quot;')}" placeholder="Labour / material" onchange="jcSlUpdateLine(${i},'desc',this.value)" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 6px;font-size:12px;"></td>
+      <td style="padding:4px 6px;"><input type="number" value="${l.qty}" min="0" step="0.1" onchange="jcSlUpdateLine(${i},'qty',+this.value)" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 6px;font-size:12px;text-align:right;font-family:var(--fm)"></td>
+      <td style="padding:4px 6px;"><input value="${l.unit}" onchange="jcSlUpdateLine(${i},'unit',this.value)" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 6px;font-size:12px;"></td>
+      <td style="padding:4px 6px;"><input type="number" value="${l.unitPrice||''}" min="0" onchange="jcSlUpdateLine(${i},'unitPrice',+this.value)" style="width:100%;background:var(--bg);border:1px solid var(--accent2);color:var(--accent);padding:5px 6px;font-size:12px;text-align:right;font-family:var(--fm)"></td>
+      <td style="padding:4px 6px;"><select onchange="jcSlUpdateLine(${i},'materialId',this.value)" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text2);padding:5px 4px;font-size:10px;">${materialLinkOptions(l.materialId)}</select></td>
+      <td style="padding:4px 6px;text-align:right;font-family:var(--fm);font-size:12px;color:var(--accent);">${fmt(l.lineTotal||0)}</td>
+      <td><button onclick="jcSlRemoveLine(${i})" style="background:none;border:none;color:var(--text3);cursor:pointer;">✕</button></td>
+    </tr>`).join('');
+  return `
+    <div style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;margin-bottom:6px;">Job Lines — Labour &amp; Materials</div>
+    <div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;min-width:640px;"><thead><tr style="background:var(--surface2);">
+      <th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px;text-align:left;">DESCRIPTION</th><th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px;">QTY</th>
+      <th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px;">UNIT</th><th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px;">PRICE</th>
+      <th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px;">LINK STOCK</th><th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px;">TOTAL</th><th></th></tr></thead>
+      <tbody>${lineRows}</tbody></table></div>
+    <button onclick="jcSlAddLine()" style="background:none;border:1px dashed var(--border);color:var(--text3);font-family:var(--fm);font-size:10px;padding:6px 14px;cursor:pointer;width:100%;margin:8px 0 12px;">+ ADD LINE (LABOUR, CALLOUT FEE, MATERIALS...)</button>`;
+}
+function jcSlAddLine() { jcDraft.originalLines.push({ desc:'', qty:1, unit:'Job', unitPrice:0, lineTotal:0, materialId:'' }); jcRefreshSetup(); }
+function jcSlRemoveLine(i) { jcDraft.originalLines.splice(i,1); jcRefreshSetup(); }
+function jcSlUpdateLine(i, field, value) {
+  const l = jcDraft.originalLines[i];
+  if (!l) return;
+  l[field] = value;
+  if (field === 'qty' || field === 'unitPrice') l.lineTotal = Math.round((l.unitPrice||0) * (l.qty||0) * 100) / 100;
+  if (field === 'materialId' && value) {
+    const m = store.materials.find(mat => String(mat.id) === String(value));
+    if (m && !l.desc) l.desc = m.name;
+    if (m && !l.unitPrice) { l.unitPrice = m.cost; l.lineTotal = Math.round(m.cost * (l.qty||1) * 100) / 100; }
+  }
+  jcRefreshSetup();
+}
+
+function jcRefreshSetup() { document.getElementById('modal-body').innerHTML = jcSetupHTML(); }
+
+function jcOnClientSelect(clientName) {
+  jcDraft.client = clientName;
+  jcDraft.projectId = ''; jcDraft.project = '';
+  if (jcDraft.mode === 'from_quote') jcPrefillFromQuote();
+  jcRefreshSetup();
+}
+
+function jcOnProjectSelect(projectId) {
+  const p = store.projects.find(x => x.id === projectId);
+  jcDraft.projectId = projectId;
+  jcDraft.project = p ? p.name : '';
+  if (jcDraft.mode === 'from_quote') jcPrefillFromQuote();
+  jcRefreshSetup();
+}
+
+function jcPrefillFromQuote() {
+  if (!jcDraft.client) { jcDraft.quoteId = null; jcDraft.originalLines = []; return; }
+  let candidates = store.quotes.filter(q => q.client === jcDraft.client && q.status === 'approved');
+  if (jcDraft.projectId) {
+    const forProject = candidates.filter(q => q.projectId === jcDraft.projectId);
+    if (forProject.length) candidates = forProject; // prefer project-matched quotes when the project narrows it down
+  }
+  const latest = candidates.sort((a,b) => new Date(b.date) - new Date(a.date))[0];
+  if (latest) {
+    jcDraft.quoteId = latest.id;
+    jcDraft.originalLines = JSON.parse(JSON.stringify(latest.lines || []));
+    if (!jcDraft.scope) jcDraft.scope = latest.desc || '';
+  } else {
+    jcDraft.quoteId = null;
+    jcDraft.originalLines = [];
+  }
+}
+
+function jcOnCompletedBySelect(name) {
+  jcDraft.completedBy = name;
+  jcDraft.completedByType = (name === 'Jaco Brits' || name === 'Heino v Niekerk') ? 'owner' : 'crew';
+}
+
+// ── STAGE 2: RAISE VARIATION (no canvas) ──
+function jcOpenRaiseVariation() {
+  jcVoDraft = { id: voNewId(), jobCardId: jcDraft.id, projectId: jcDraft.projectId, project: jcDraft.project, client: jcDraft.client,
+    reason: 'client_request', description: '', lines: [{ desc:'', qty:1, unit:'Job', unitPrice:0, lineTotal:0 }],
+    raisedBy: jcDraft.completedBy || 'Jaco Brits', approvalMethod: 'in_person', status: 'pending', createdAt: new Date().toISOString() };
+  openModal('RAISE VARIATION ORDER — ' + jcVoDraft.id, jcVoHTML());
+}
+
+function jcVoHTML() {
+  const amount = jcVoDraft.lines.reduce((s,l) => s + (l.lineTotal||0), 0);
+  const lineRows = jcVoDraft.lines.map((l,i) => `
+    <tr>
+      <td style="padding:4px 6px;"><input value="${(l.desc||'').replace(/"/g,'&quot;')}" placeholder="Extra work / item" onchange="jcVoUpdateLine(${i},'desc',this.value)" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 6px;font-size:12px;"></td>
+      <td style="padding:4px 6px;"><input type="number" value="${l.qty}" min="0" step="0.1" onchange="jcVoUpdateLine(${i},'qty',+this.value)" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 6px;font-size:12px;text-align:right;font-family:var(--fm)"></td>
+      <td style="padding:4px 6px;"><input value="${l.unit}" onchange="jcVoUpdateLine(${i},'unit',this.value)" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 6px;font-size:12px;"></td>
+      <td style="padding:4px 6px;"><input type="number" value="${l.unitPrice||''}" min="0" onchange="jcVoUpdateLine(${i},'unitPrice',+this.value)" style="width:100%;background:var(--bg);border:1px solid var(--accent2);color:var(--accent);padding:5px 6px;font-size:12px;text-align:right;font-family:var(--fm)"></td>
+      <td style="padding:4px 6px;"><select onchange="jcVoUpdateLine(${i},'materialId',this.value)" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text2);padding:5px 4px;font-size:10px;">${materialLinkOptions(l.materialId)}</select></td>
+      <td style="padding:4px 6px;text-align:right;font-family:var(--fm);font-size:12px;color:var(--accent);">${fmt(l.lineTotal||0)}</td>
+      <td><button onclick="jcVoRemoveLine(${i})" style="background:none;border:none;color:var(--text3);cursor:pointer;">✕</button></td>
+    </tr>`).join('');
+
+  return `
+    <div class="form-group" style="margin-bottom:10px;"><label>What's changed / why</label><textarea id="jc-vo-desc" oninput="jcVoDraft.description=this.value" placeholder="e.g. Client requested pantry floor tiled while on site">${jcVoDraft.description}</textarea></div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:6px;"><thead><tr style="background:var(--surface2);">
+      <th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px;text-align:left;">ITEM</th><th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px;">QTY</th>
+      <th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px;">UNIT</th><th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px;">PRICE</th>
+      <th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px;">LINK STOCK</th><th style="font-family:var(--fm);font-size:8px;color:var(--text3);padding:6px;">TOTAL</th><th></th></tr></thead><tbody>${lineRows}</tbody></table>
+    <button onclick="jcVoAddLine()" style="background:none;border:1px dashed var(--border);color:var(--text3);font-family:var(--fm);font-size:10px;padding:6px 14px;cursor:pointer;width:100%;margin-bottom:12px;">+ ADD LINE</button>
+    <div style="display:flex;justify-content:flex-end;font-size:14px;font-weight:600;color:var(--accent);margin-bottom:14px;">TOTAL: <span class="mono" style="margin-left:8px">${fmt(amount)}</span></div>
+
+    <div style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;margin-bottom:8px;">How will the client approve this?</div>
+    <div class="bp-mode-toggle" style="margin-bottom:14px;">
+      <button class="bp-mode-btn ${jcVoDraft.approvalMethod==='in_person'?'active':''}" onclick="jcVoSetMethod('in_person')">✎ IN PERSON — SIGN NOW</button>
+      <button class="bp-mode-btn ${jcVoDraft.approvalMethod==='portal'?'active':''}" onclick="jcVoSetMethod('portal')">🔗 SEND TO CLIENT PORTAL</button>
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:14px;">${jcVoDraft.approvalMethod==='in_person' ? 'Client is on site — next step captures their signature and GPS location right now. Cost exists only once signed.' : "Client isn't on site — this sends to their portal for remote approval. The job card can't be signed off until they respond."}</div>
+
+    <div class="form-actions">
+      <button class="topbar-btn" onclick="jcVoProceed()">${jcVoDraft.approvalMethod==='in_person' ? 'GET SIGNATURE →' : 'SEND FOR APPROVAL'}</button>
+      <button class="topbar-btn secondary" onclick="jcCancelVariation()">CANCEL</button>
+    </div>`;
+}
+function jcVoRefresh() { document.getElementById('modal-body').innerHTML = jcVoHTML(); }
+function jcVoAddLine() { jcVoDraft.lines.push({desc:'',qty:1,unit:'Job',unitPrice:0,lineTotal:0,materialId:''}); jcVoRefresh(); }
+function jcVoRemoveLine(i) { jcVoDraft.lines.splice(i,1); jcVoRefresh(); }
+function jcVoUpdateLine(i, field, value) {
+  const l = jcVoDraft.lines[i];
+  l[field] = value;
+  if (field === 'qty' || field === 'unitPrice') l.lineTotal = Math.round((l.unitPrice||0) * (l.qty||0) * 100) / 100;
+  if (field === 'materialId' && value) {
+    const m = store.materials.find(mat => String(mat.id) === String(value));
+    if (m && !l.desc) l.desc = m.name;
+    if (m && !l.unitPrice) { l.unitPrice = m.cost; l.lineTotal = Math.round(m.cost * (l.qty||1) * 100) / 100; }
+  }
+  jcVoRefresh();
+}
+function jcVoSetMethod(method) { jcVoDraft.approvalMethod = method; jcVoRefresh(); }
+function jcCancelVariation() { jcVoDraft = null; openModal((jcDraft.mode==='standalone'?'NEW JOB CARD (STANDALONE) — ':'NEW JOB CARD — ') + jcDraft.id, jcSetupHTML()); }
+
+function jcVoProceed() {
+  const lines = jcVoDraft.lines.filter(l => l.desc.trim() && l.unitPrice > 0);
+  if (lines.length === 0) { alert('Add at least one line item with a description and price'); return; }
+  jcVoDraft.lines = lines;
+  jcVoDraft.amount = Math.round(lines.reduce((s,l)=>s+l.lineTotal,0)*100)/100;
+  if (jcVoDraft.approvalMethod === 'in_person') {
+    openModal('CLIENT SIGNATURE — ' + jcVoDraft.id, jcVoSignHTML());
+    setTimeout(() => { jcVoSigCanvas = initSignaturePad('jc-vo-sig-canvas'); }, 50);
+  } else {
+    jcVoSubmitPortal();
+  }
+}
+
+// ── STAGE 3: VARIATION IN-PERSON SIGNATURE (fresh canvas, never re-rendered) ──
+function jcVoSignHTML() {
+  return `
+    <div style="background:var(--surface2);padding:10px 12px;margin-bottom:14px;font-size:12px;">
+      <div style="color:var(--text3);font-family:var(--fm);font-size:9px;letter-spacing:1px;margin-bottom:4px;">VARIATION AMOUNT</div>
+      <div style="font-family:var(--fd);font-size:24px;color:var(--accent);">${fmt(jcVoDraft.amount)}</div>
+    </div>
+    <div id="jc-vo-gps-line" style="font-family:var(--fm);font-size:10px;color:var(--text3);margin-bottom:12px;">📍 Capturing location…</div>
+    <div class="form-group" style="margin-bottom:10px;"><label>Client Printed Name</label><input type="text" id="jc-vo-signee" placeholder="Full name"></div>
+    <label style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;">Client Signature</label>
+    <canvas id="jc-vo-sig-canvas" style="width:100%;height:150px;background:#fff;border:1px solid var(--border);touch-action:none;cursor:crosshair;margin-top:6px;"></canvas>
+    <button onclick="jcVoSigCanvas && jcVoSigCanvas._clear()" class="action-btn" style="margin-top:8px;">CLEAR SIGNATURE</button>
+    <div class="form-actions" style="margin-top:16px;">
+      <button class="topbar-btn" style="background:var(--green);" onclick="jcVoConfirmInPerson()">✓ CONFIRM APPROVAL</button>
+      <button class="topbar-btn secondary" onclick="jcCancelVariation()">CANCEL</button>
+    </div>`;
+}
+
+async function jcVoConfirmInPerson() {
+  const gps = await captureGPS();
+  const gpsLine = document.getElementById('jc-vo-gps-line');
+  if (gpsLine) gpsLine.textContent = '📍 ' + gps.address;
+  jcVoDraft.gps = gps;
+
+  const name = (document.getElementById('jc-vo-signee')||{}).value || '';
+  if (!name.trim()) { alert('Client printed name is required'); return; }
+  if (!jcVoSigCanvas || !jcVoSigCanvas._hasContent()) { alert('Client signature is required'); return; }
+
+  jcVoDraft.status = 'approved';
+  jcVoDraft.signedByName = name.trim();
+  jcVoDraft.signature = jcVoSigCanvas._toDataURL();
+  jcVoDraft.approvedAt = new Date().toISOString();
+  saveVariationOrder(jcVoDraft);
+  deductMaterialStock(jcVoDraft.lines);
+  store.activity.unshift({ text: `Variation ${jcVoDraft.id} approved in-person by ${name.trim()} — ${fmt(jcVoDraft.amount)}`, time: 'Just now', type: 'green' });
+  save();
+  toast(`✓ Variation ${jcVoDraft.id} approved — ${fmt(jcVoDraft.amount)}`);
+  jcVoDraft = null; jcVoSigCanvas = null;
+  openModal(jcModalTitle(), jcSetupHTML());
+}
+
+function jcVoSubmitPortal() {
+  jcVoDraft.status = 'pending';
+  saveVariationOrder(jcVoDraft);
+  store.activity.unshift({ text: `Variation ${jcVoDraft.id} sent to client portal for approval — ${fmt(jcVoDraft.amount)}`, time: 'Just now', type: 'blue' });
+  save();
+  syncClientPortal(jcVoDraft.client);
+  toast(`Sent for client approval — ${jcVoDraft.id}`);
+  jcVoDraft = null;
+  openModal(jcModalTitle(), jcSetupHTML());
+}
+
+// ── STAGE 4: JOB CARD SIGN-OFF (fresh canvas, never re-rendered) ──
+function jcContinueToSignOff() {
+  if (!jcDraft.client) { alert('Select a client'); return; }
+  if (!jcDraft.completedBy) { alert('Select who completed the work'); return; }
+  if (!jcDraft.scope.trim()) { alert('Describe the scope of work completed'); return; }
+  if (jcDraft.originalLines.filter(l => l.desc && l.desc.trim()).length === 0) {
+    alert(jcDraft.mode === 'from_quote' ? 'No approved quote found for this client/project — cancel and use Standalone instead' : 'Add at least one job line with a description');
+    return;
+  }
+  if (jcPendingCount(jcDraft.id) > 0) { alert('Resolve pending variations before sign-off'); return; }
+
+  openModal('SIGN OFF — ' + jcDraft.id, jcSignOffHTML());
+  setTimeout(() => { jcSigCanvas = initSignaturePad('jc-sig-canvas'); }, 50);
+  captureGPS().then(gps => {
+    jcDraft.gps = gps;
+    const el = document.getElementById('jc-gps-line');
+    if (el) el.textContent = '📍 ' + gps.address;
+  });
+}
+
+function jcSignOffHTML() {
+  return `
+    <div style="background:var(--surface2);padding:12px 14px;margin-bottom:14px;">
+      <div style="font-size:13px;font-weight:600;margin-bottom:4px;">${jcDraft.project} — ${jcDraft.client}</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:8px;">${jcDraft.scope}</div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2)"><span>Original Scope</span><span class="mono">${fmt(jcOriginalTotal())}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2)"><span>Approved Variations</span><span class="mono">${fmt(jcApprovedTotal(jcDraft.id))}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:15px;font-weight:600;color:var(--accent);margin-top:4px;"><span>TOTAL</span><span class="mono">${fmt(jcGrandTotal())}</span></div>
+    </div>
+    <div id="jc-gps-line" style="font-family:var(--fm);font-size:10px;color:var(--text3);margin-bottom:12px;">📍 Capturing location…</div>
+    <div class="form-group" style="margin-bottom:10px;"><label>Client Printed Name</label><input type="text" id="jc-signee" placeholder="Full name"></div>
+    <label style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;">Client Signature</label>
+    <canvas id="jc-sig-canvas" style="width:100%;height:150px;background:#fff;border:1px solid var(--border);touch-action:none;cursor:crosshair;margin-top:6px;"></canvas>
+    <button onclick="jcSigCanvas && jcSigCanvas._clear()" class="action-btn" style="margin-top:8px;">CLEAR SIGNATURE</button>
+    <div style="font-family:var(--fm);font-size:9px;color:var(--text3);margin-top:12px;line-height:1.7;">By signing, the client confirms the above scope — original plus any approved variations — was completed satisfactorily. No further items can be added to this card once signed.</div>
+    <div class="form-actions">
+      <button class="topbar-btn" style="background:var(--green);" onclick="jcConfirmSignOff()">✓ CONFIRM &amp; SIGN OFF</button>
+      <button class="topbar-btn secondary" onclick="openModal(jcModalTitle(), jcSetupHTML())">← BACK</button>
+    </div>`;
+}
+
+function jcConfirmSignOff() {
+  const name = (document.getElementById('jc-signee')||{}).value || '';
+  if (!name.trim()) { alert('Client printed name is required'); return; }
+  if (!jcSigCanvas || !jcSigCanvas._hasContent()) { alert('Client signature is required'); return; }
+
+  jcDraft.signedByName = name.trim();
+  jcDraft.signature = jcSigCanvas._toDataURL();
+  jcDraft.status = 'signed';
+  jcDraft.total = jcGrandTotal();
+  jcDraft.signedAt = new Date().toISOString();
+  deductMaterialStock(jcDraft.originalLines); // no-ops for lines without a linked materialId (e.g. quote-prefilled lines)
+
+  let createdInvoiceId = null;
+  if (!jcDraft.projectId) {
+    // Standalone / callout — no project to batch against, invoice immediately.
+    createdInvoiceId = jcAutoCreateInvoice(jcDraft);
+    jcDraft.linkedInvoiceId = createdInvoiceId;
+    jcDraft.billed = true;
+  } else {
+    // Project-linked — leave unbilled, Jaco/Heino batch it later via Combine & Invoice.
+    jcDraft.billed = false;
+  }
+
+  saveJobCard(jcDraft);
+  store.activity.unshift({ text: `Job card ${jcDraft.id} signed off by ${name.trim()} — ${fmt(jcDraft.total)}`, time: 'Just now', type: 'green' });
+  save();
+  toast(`✓ Job card ${jcDraft.id} signed — ${fmt(jcDraft.total)}`);
+  const doneId = jcDraft.id;
+  jcDraft = null; jcSigCanvas = null;
+  closeModalDirect();
+  renderPage('jobcards');
+  if (createdInvoiceId) setTimeout(() => jcOfferSendInvoice(createdInvoiceId), 500);
+  else setTimeout(() => jcPreviewDoc(doneId), 600);
+}
+
+function jcAutoCreateInvoice(jc) {
+  const year = new Date().getFullYear();
+  const invId = `INV-${year}-${String(store.invoices.filter(i=>i.type!=='credit').length+1).padStart(3,'0')}`;
+  const lines = [...(jc.originalLines||[]), ...jcLinkedVariations(jc.id).filter(v=>v.status==='approved').map(v=>({desc:v.description+' ('+v.id+')', qty:1, unit:'Job', unitPrice:v.amount, lineTotal:v.amount}))];
+  store.invoices.unshift({ id: invId, client: jc.client, project: jc.projectId || '-', amount: jc.total,
+    issued: new Date().toISOString().split('T')[0], due: new Date(Date.now()+7*24*60*60*1000).toISOString().split('T')[0],
+    status: 'sent', desc: `Callout — Job Card ${jc.id}`, lines });
+  store.activity.unshift({ text: `Invoice ${invId} auto-created from standalone Job Card ${jc.id} — ${fmt(jc.total)}`, time: 'Just now', type: 'green' });
+  save();
+  syncClientPortal(jc.client);
+  return invId;
+}
+
+function jcOfferSendInvoice(invId) {
+  const i = store.invoices.findIndex(inv => inv.id === invId);
+  if (i === -1) return;
+  const inv = store.invoices[i];
+  const client = store.clients.find(c => c.name === inv.client);
+  openModal('INVOICE CREATED — ' + invId, `
+    <div style="background:rgba(76,175,125,.06);border:1px solid rgba(76,175,125,.2);padding:14px;margin-bottom:14px;text-align:center;">
+      <div style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--green);text-transform:uppercase;margin-bottom:6px;">Job Signed &amp; Invoiced</div>
+      <div style="font-family:var(--fd);font-size:28px;color:var(--accent);">${fmt(inv.amount)}</div>
+      <div style="font-size:12px;color:var(--text2);margin-top:4px;">${inv.client} · ${invId}</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <button onclick="shareWhatsApp('invoice',${i});closeModalDirect();" style="display:flex;align-items:center;justify-content:center;gap:10px;background:#25D366;color:#fff;border:none;padding:14px;font-family:var(--fd);font-size:18px;cursor:pointer;">📲 SEND VIA WHATSAPP</button>
+      <button onclick="shareEmail('invoice',${i});closeModalDirect();" style="display:flex;align-items:center;justify-content:center;gap:10px;background:var(--blue);color:#fff;border:none;padding:14px;font-family:var(--fd);font-size:18px;cursor:pointer;" ${client&&client.email?'':'disabled style="opacity:.4;cursor:not-allowed;"'}>✉ SEND VIA EMAIL</button>
+      <button class="topbar-btn secondary" onclick="closeModalDirect()">SEND LATER</button>
+    </div>`);
+}
+
+// ── PDF (client-safe — no cost/markup, matches Quote/Invoice pattern) ──
+function jcBuildDocHTML(jc) {
+  const variations = jcLinkedVariations(jc.id).filter(v => v.status === 'approved');
+  const lineRows = (jc.originalLines||[]).map(l => `<tr><td style="padding:9px 12px;border-bottom:1px solid #e8d89a;font-size:13px;">${l.desc}</td><td style="padding:9px 12px;border-bottom:1px solid #e8d89a;text-align:right;font-family:monospace;font-size:13px;">R ${(l.lineTotal||0).toLocaleString('en-ZA',{minimumFractionDigits:2})}</td></tr>`).join('');
+  const voRows = variations.map(v => `<tr><td style="padding:9px 12px;border-bottom:1px solid #e8d89a;font-size:13px;">${v.description} <span style="color:#9b72cf;font-family:monospace;font-size:10px;">(${v.id})</span></td><td style="padding:9px 12px;border-bottom:1px solid #e8d89a;text-align:right;font-family:monospace;font-size:13px;color:#9b72cf;">R ${v.amount.toLocaleString('en-ZA',{minimumFractionDigits:2})}</td></tr>`).join('');
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Job Card ${jc.id}</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap" rel="stylesheet">
+<style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:'IBM Plex Sans',sans-serif;font-size:13px;color:#1a1200;background:#fff;}@page{size:A4;margin:14mm;}@media print{.no-print{display:none!important;}}
+.page{max-width:800px;margin:0 auto;padding:32px 36px;}.hdr{display:flex;justify-content:space-between;border-bottom:3px solid #3fc9c0;padding-bottom:16px;margin-bottom:20px;}
+.brand{font-family:'Cormorant Garamond',serif;font-size:24px;color:#b8822a;}.doctype{font-family:'Cormorant Garamond',serif;font-size:26px;color:#1a1200;text-align:right;}
+.sig-box{border:1px solid #ccc;margin-top:8px;}.sig-box img{width:220px;display:block;}
+.toolbar{background:#1a1200;padding:12px 24px;}.btn{padding:8px 16px;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;cursor:pointer;border:none;background:#3fc9c0;color:#0c2c29;}</style></head>
+<body><div class="toolbar no-print"><button class="btn" onclick="window.print()">⬇ DOWNLOAD / PRINT PDF</button></div>
+<div class="page">
+  <div class="hdr"><div><div class="brand">Otto's Renovation &amp; Beautification</div><div style="font-size:11px;color:#5a4a20;margin-top:4px;">31 Augrabies Ave, Mooikloof Ridge Estate, Pretoria<br>Heino: 062 274 9921 · Jaco: 072 470 6471</div></div><div><div class="doctype">JOB CARD</div><div style="font-family:'IBM Plex Mono',monospace;color:#b8822a;text-align:right;">${jc.id}</div></div></div>
+  <div style="margin-bottom:16px;"><strong>${jc.client}</strong><br><span style="font-size:12px;color:#5a4a20">${jc.project}</span></div>
+  <div style="background:#fdf8ec;border:1px solid #e8d89a;padding:12px 14px;margin-bottom:16px;font-size:12px;">${jc.scope}</div>
+  <table style="width:100%;border-collapse:collapse;"><thead><tr style="background:#3fc9c0;"><th style="padding:9px 12px;text-align:left;font-family:'IBM Plex Mono',monospace;font-size:9px;">DESCRIPTION</th><th style="padding:9px 12px;text-align:right;font-family:'IBM Plex Mono',monospace;font-size:9px;">AMOUNT</th></tr></thead>
+  <tbody>${lineRows}${voRows}</tbody></table>
+  <div style="display:flex;justify-content:flex-end;padding:12px;font-size:16px;font-weight:700;color:#1a1200;">TOTAL: R ${jc.total.toLocaleString('en-ZA',{minimumFractionDigits:2})}</div>
+  <div style="display:flex;gap:40px;margin-top:24px;">
+    <div><div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:#8a7040;">COMPLETED BY</div><div style="margin-top:4px;">${jc.completedBy}</div></div>
+    <div><div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:#8a7040;">DATE / LOCATION</div><div style="margin-top:4px;">${dt(jc.date)} — ${jc.gps ? jc.gps.address : 'N/A'}</div></div>
+  </div>
+  <div style="margin-top:20px;"><div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:#8a7040;">CLIENT SIGN-OFF — ${jc.signedByName}</div><div class="sig-box"><img src="${jc.signature}"></div></div>
+</div></body></html>`;
+}
+
+function jcPreviewDoc(id) {
+  const jc = jobCards.find(j => j.id === id);
+  if (!jc) return;
+  const html = jcBuildDocHTML(jc);
+  const w = window.open('', '_blank', 'width=900,height=750');
+  if (!w) { toast('Allow pop-ups to open PDF preview'); return; }
+  w.document.write(html); w.document.close();
+}
+
+function jcUnbilledCardsForProject(projectId) {
+  return jobCards.filter(j => j.projectId === projectId && j.status === 'signed' && j.billed === false);
+}
+
+function jcOpenCombineInvoice(projectId, preselectId) {
+  const cards = jcUnbilledCardsForProject(projectId);
+  if (cards.length === 0) { toast('No unbilled job cards for this project'); return; }
+  openModal('COMBINE & INVOICE — ' + (cards[0].project||''), `
+    <div style="font-size:12px;color:var(--text2);margin-bottom:12px;">Select the signed job cards to combine into one progress claim.</div>
+    <div class="panel" style="margin-bottom:14px;">
+      ${cards.map(c => `
+        <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;">
+          <input type="checkbox" class="jc-combine-chk" value="${c.id}" ${(!preselectId || c.id===preselectId) ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent);">
+          <div style="flex:1;">
+            <div style="font-size:13px;font-weight:600;">${c.id} <span style="font-weight:400;color:var(--text3);font-size:11px;">— ${dt(c.date)}</span></div>
+            <div style="font-size:11px;color:var(--text2);">${c.scope||''}</div>
+          </div>
+          <div style="font-family:var(--fm);color:var(--accent);">${fmt(c.total)}</div>
+        </label>`).join('')}
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:14px;font-weight:600;color:var(--accent);margin-bottom:14px;" id="jc-combine-total">
+      <span>TOTAL SELECTED</span><span class="mono">${fmt(cards.filter(c=>!preselectId||c.id===preselectId).reduce((s,c)=>s+c.total,0))}</span>
+    </div>
+    <div class="form-actions">
+      <button class="topbar-btn" onclick="jcConfirmCombineInvoice('${projectId}')">CREATE COMBINED INVOICE</button>
+      <button class="topbar-btn secondary" onclick="closeModalDirect()">CANCEL</button>
+    </div>`);
+  document.querySelectorAll('.jc-combine-chk').forEach(chk => chk.addEventListener('change', () => jcRefreshCombineTotal(projectId)));
+}
+
+function jcRefreshCombineTotal(projectId) {
+  const selected = Array.from(document.querySelectorAll('.jc-combine-chk:checked')).map(c => c.value);
+  const total = jobCards.filter(j => selected.includes(j.id)).reduce((s,j) => s + j.total, 0);
+  const el = document.getElementById('jc-combine-total');
+  if (el) el.querySelector('span:last-child').textContent = fmt(total);
+}
+
+function jcConfirmCombineInvoice(projectId) {
+  const selectedIds = Array.from(document.querySelectorAll('.jc-combine-chk:checked')).map(c => c.value);
+  if (selectedIds.length === 0) { alert('Select at least one job card'); return; }
+  const cards = jobCards.filter(j => selectedIds.includes(j.id));
+  const client = cards[0].client;
+  const year = new Date().getFullYear();
+  const invId = `INV-${year}-${String(store.invoices.filter(i=>i.type!=='credit').length+1).padStart(3,'0')}`;
+  const lines = [];
+  cards.forEach(jc => {
+    lines.push(...(jc.originalLines||[]).map(l => ({ ...l, desc: l.desc + ' (' + jc.id + ')' })));
+    lines.push(...jcLinkedVariations(jc.id).filter(v=>v.status==='approved').map(v=>({desc:v.description+' ('+v.id+')', qty:1, unit:'Job', unitPrice:v.amount, lineTotal:v.amount})));
+  });
+  const total = cards.reduce((s,jc) => s + jc.total, 0);
+  store.invoices.unshift({ id: invId, client, project: projectId, amount: total,
+    issued: new Date().toISOString().split('T')[0], due: new Date(Date.now()+7*24*60*60*1000).toISOString().split('T')[0],
+    status: 'sent', desc: `Progress claim — ${cards.length} job card${cards.length>1?'s':''} (${cards.map(c=>c.id).join(', ')})`,
+    lines });
+  cards.forEach(jc => { jc.linkedInvoiceId = invId; jc.billed = true; saveJobCard(jc); });
+  store.activity.unshift({ text: `Progress claim ${invId} raised from ${cards.length} job card(s) — ${fmt(total)}`, time: 'Just now', type: 'green' });
+  save();
+  syncClientPortal(client);
+  closeModalDirect();
+  toast(`✓ Progress claim ${invId} created — ${fmt(total)}`);
+  setTimeout(() => navigate('invoices'), 1000);
 }
 
 // ══════════════════════════════════════════════════════

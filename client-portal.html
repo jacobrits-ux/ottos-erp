@@ -122,12 +122,14 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);font-size:14px
   <div class="tabs">
     <div class="tab active" data-tab="projects" onclick="switchTab('projects')">Projects <span class="tcount" id="count-projects">0</span></div>
     <div class="tab" data-tab="quotes" onclick="switchTab('quotes')">Quotes <span class="tcount" id="count-quotes">0</span></div>
+    <div class="tab" data-tab="variations" onclick="switchTab('variations')">Variations <span class="tcount" id="count-variations">0</span></div>
     <div class="tab" data-tab="invoices" onclick="switchTab('invoices')">Invoices <span class="tcount" id="count-invoices">0</span></div>
   </div>
 
   <div class="wrap">
     <div class="tabpanel active" id="panel-projects"></div>
     <div class="tabpanel" id="panel-quotes"></div>
+    <div class="tabpanel" id="panel-variations"></div>
     <div class="tabpanel" id="panel-invoices"></div>
   </div>
 
@@ -192,8 +194,8 @@ async function loadPortal() {
   }
 }
 
-async function writeAction(quoteId, action) {
-  portalActions[quoteId] = { action, at: new Date().toISOString() };
+async function writeAction(key, action) {
+  portalActions[key] = { action, at: new Date().toISOString() };
   try {
     await fetch(`${fsBase()}/clientPortal/${TOKEN}?updateMask.fieldPaths=actions`, {
       method: 'PATCH',
@@ -223,7 +225,56 @@ function renderAll() {
   document.title = `Client Portal — ${portalData.clientName || ''}`;
   renderProjects();
   renderQuotes();
+  renderVariations();
   renderInvoices();
+}
+
+// ── VARIATIONS ──
+function renderVariations() {
+  const list = portalData.variations || [];
+  document.getElementById('count-variations').textContent = list.filter(v => v.status === 'pending').length || list.length;
+  const el = document.getElementById('panel-variations');
+  if (list.length === 0) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">✎</div><div class="empty-title">NO VARIATIONS</div><div class="empty-sub">Any extra work agreed on site or requested by you will appear here for approval before it's added to your job.</div></div>`;
+    return;
+  }
+  el.innerHTML = list.map(v => {
+    const lineRows = (v.lines||[]).map(l => `<tr><td>${l.desc||'—'}</td><td class="num">${l.qty}</td><td class="num">${l.unit||''}</td><td class="num">${fmt(l.lineTotal)}</td></tr>`).join('');
+    const canDecide = v.status === 'pending';
+    let actionsHtml = '';
+    if (canDecide) {
+      actionsHtml = `<div class="actions">
+        <button class="btn btn-approve" onclick="decideVariation('${v.id}','approved')">✓ APPROVE</button>
+        <button class="btn btn-decline" onclick="decideVariation('${v.id}','declined')">✕ DECLINE</button>
+      </div>`;
+    } else {
+      const txt = v.status === 'approved' ? '✓ You approved this variation' : '✕ You declined this variation';
+      const col = v.status === 'approved' ? 'var(--green)' : 'var(--red)';
+      actionsHtml = `<div class="decided-note" style="color:${col}">${txt}</div>`;
+    }
+    return `
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">${v.description||v.id}</div><div class="card-id">${v.id} · ${v.project||''}</div></div>
+        ${statusBadge(v.status)}
+      </div>
+      <div class="card-body">
+        <table class="lines-table"><thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Amount</th></tr></thead><tbody>${lineRows}</tbody></table>
+      </div>
+      <div class="total-line grand"><span>TOTAL</span><span class="amt">${fmt(v.amount)}</span></div>
+      ${actionsHtml}
+    </div>`;
+  }).join('');
+}
+
+async function decideVariation(voId, action) {
+  const label = action === 'approved' ? 'approve' : 'decline';
+  if (!confirm(`Are you sure you want to ${label} this variation? Otto's will be notified immediately.`)) return;
+  await writeAction('vo:' + voId, action);
+  const v = portalData.variations.find(x => x.id === voId);
+  if (v) v.status = action;
+  renderVariations();
+  toast(action === 'approved' ? '✓ Variation approved — thank you!' : "Variation declined — Otto's has been notified");
 }
 
 // ── PROJECTS ──
