@@ -6,6 +6,61 @@
 // being already defined in shared script scope.
 // ══════════════════════════════════════════════════════
 
+// ── AI API KEY SETUP (shared by all 3 AI features) ──
+// The deployed site is a real, independent website — not a Claude.ai
+// session — so calls to api.anthropic.com need a real key supplied by
+// the person using the app. Stored locally on this device only.
+function getAIKey() {
+  const cfg = JSON.parse(localStorage.getItem('ottos_ai_config') || 'null') || {};
+  return cfg.apiKey || null;
+}
+
+function showAISetup() {
+  const saved = JSON.parse(localStorage.getItem('ottos_ai_config') || 'null') || {};
+  openModal('🤖 AI FEATURES SETUP', `
+    <div style="background:rgba(155,114,207,.08);border:1px solid rgba(155,114,207,.25);padding:12px 14px;margin-bottom:14px;">
+      <div style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--purple);text-transform:uppercase;margin-bottom:6px;">Setup (2 min, once per device)</div>
+      <div style="font-size:12px;color:var(--text2);line-height:1.9;">
+        1 → <b>console.anthropic.com</b> → Get API Keys → Create Key<br>
+        2 → Console → Set a monthly spend limit (recommended R100–R150)<br>
+        3 → Paste the key below → ACTIVATE AI FEATURES
+      </div>
+    </div>
+    <div class="form-grid">
+      <div class="form-group full"><label>Anthropic API Key</label><input type="password" id="ai-apikey" placeholder="sk-ant-..." value="${saved.apiKey||''}" autocomplete="off"></div>
+    </div>
+    <div id="ai-status-msg" style="font-family:var(--fm);font-size:10px;margin:10px 0;letter-spacing:1px;min-height:16px;"></div>
+    <div style="background:rgba(232,160,32,.06);border:1px solid rgba(232,160,32,.2);padding:10px 12px;margin-bottom:6px;font-size:11px;color:var(--text2);line-height:1.6;">
+      ⚠ Stored on this device only, sent directly to Anthropic when you use Blueprint AI, Describe Project, or Scan Invoice. Set a spend limit in the console — don't rely on this screen alone to cap cost.
+    </div>
+    <div class="form-actions">
+      <button class="topbar-btn" onclick="saveAIConfig()">⚡ ACTIVATE AI FEATURES</button>
+      ${saved.apiKey ? `<button class="topbar-btn secondary" onclick="disableAIConfig()">REMOVE KEY</button>` : ''}
+      <button class="topbar-btn secondary" onclick="closeModalDirect()">CANCEL</button>
+    </div>
+    ${saved.apiKey ? `<div style="margin-top:10px;padding:10px;background:rgba(76,175,125,.06);border:1px solid rgba(76,175,125,.2);font-family:var(--fm);font-size:10px;color:var(--text2);">Key active: <b style="color:var(--text)">${saved.apiKey.slice(0,10)}...${saved.apiKey.slice(-4)}</b></div>` : ''}
+  `);
+}
+
+function saveAIConfig() {
+  const apiKey = (document.getElementById('ai-apikey')?.value || '').trim();
+  const msg = document.getElementById('ai-status-msg');
+  if (!apiKey || !apiKey.startsWith('sk-ant-')) {
+    if (msg) { msg.style.color = 'var(--red)'; msg.textContent = '⚠ Enter a valid Anthropic API key (starts with sk-ant-)'; }
+    return;
+  }
+  localStorage.setItem('ottos_ai_config', JSON.stringify({ apiKey }));
+  if (msg) { msg.style.color = 'var(--green)'; msg.textContent = '✓ Saved — AI features are now active'; }
+  setTimeout(closeModalDirect, 1000);
+}
+
+function disableAIConfig() {
+  if (!confirm('Remove the saved API key? Blueprint AI, Describe Project, and Scan Invoice will stop working until a new key is added.')) return;
+  localStorage.removeItem('ottos_ai_config');
+  closeModalDirect();
+  toast('API key removed');
+}
+
 // ── DESCRIBE PROJECT → BOM ──
 let describeResult = null;
 
@@ -33,6 +88,9 @@ function renderDescribe() {
 async function runDescribe() {
   const text = (document.getElementById('desc-text').value || '').trim();
   if (!text) { toast('Please describe your project first'); return; }
+
+  const _aiKey = getAIKey();
+  if (!_aiKey) { toast('⚠ AI features need setup first'); showAISetup(); return; }
 
   const btn = document.getElementById('desc-btn');
   btn.disabled = true;
@@ -104,10 +162,11 @@ RULES:
       headers: {
         'Content-Type': 'application/json',
         'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'x-api-key': _aiKey
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-5',
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 3000,
         system: systemPrompt,
         messages: [{ role: 'user', content: `Project description: ${text}${notes ? '\n\nAdditional notes: ' + notes : ''}${type ? '\nProject type hint: ' + type.replace(/_/g,' ') : ''}` }]
@@ -276,6 +335,10 @@ function handleScanFile(e) {
 
 async function runInvoiceScan() {
   if (!scanBase64) return;
+
+  const _aiKey = getAIKey();
+  if (!_aiKey) { toast('⚠ AI features need setup first'); showAISetup(); return; }
+
   const btn = document.getElementById('scan-btn');
   btn.disabled = true;
   btn.style.opacity = '0.7';
@@ -320,10 +383,11 @@ Rules:
       headers: {
         'Content-Type': 'application/json',
         'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'x-api-key': _aiKey
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-5',
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 2000,
         system: systemPrompt,
         messages: [{
@@ -587,6 +651,9 @@ function bpClearPhotos() {
 async function bpRunAnalysis() {
   if (bpUploadedPhotos.length === 0) { toast('Please upload at least one image first'); return; }
 
+  const _aiKey = getAIKey();
+  if (!_aiKey) { toast('⚠ AI features need setup first'); showAISetup(); return; }
+
   const btn = document.getElementById('bp-analyze-btn');
   btn.disabled = true;
   document.getElementById('bp-shimmer').style.display = 'block';
@@ -696,7 +763,7 @@ ${isPhotoMode ? '- Increase contingency to 15% due to photo-based estimation unc
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true', 'x-api-key': _aiKey },
       body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 4000, system: systemPrompt, messages: [{ role: 'user', content: [...imageBlocks, textBlock] }] })
     });
     if (!response.ok) { const errText = await response.text(); throw new Error(`API error ${response.status}: ${errText.slice(0,300)}`); }
