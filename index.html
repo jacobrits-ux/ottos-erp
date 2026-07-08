@@ -363,6 +363,8 @@ select option{background:var(--surface2);}
 <!-- Firebase SDK — real-time multi-device sync -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
 
@@ -645,6 +647,15 @@ select option{background:var(--surface2);}
           <div class="kpi-card green"><div class="kpi-label">Gross Margin</div><div class="kpi-value" id="rpt-margin">0%</div><div class="kpi-sub" id="rpt-margin-sub">Revenue minus expenses</div></div>
           <div class="kpi-card blue"><div class="kpi-label">Jobs Completed</div><div class="kpi-value" id="rpt-jobs">0</div><div class="kpi-sub" id="rpt-jobs-sub">All time</div></div>
           <div class="kpi-card purple"><div class="kpi-label">YTD Expenses</div><div class="kpi-value" id="rpt-expenses">R0</div><div class="kpi-sub" id="rpt-expenses-sub">Year to date</div></div>
+        </div>
+        <div class="panel" style="margin-bottom:12px;">
+          <div class="panel-header">
+            <span class="panel-title">Accounts Receivable Aging</span>
+            <button onclick="exportAgingCSV()" class="action-btn" style="margin-left:auto;color:var(--accent);border-color:var(--accent);">⬇ Export CSV</button>
+          </div>
+          <div class="stat-row" id="aging-stats"></div>
+          <div class="table-scroll"><table class="data-table"><thead><tr><th>Client</th><th>Current</th><th>1-30 Days</th><th>31-60 Days</th><th>61-90 Days</th><th>90+ Days</th><th>Total</th><th>Actions</th></tr></thead><tbody id="aging-body"></tbody></table></div>
+          <div class="card-list" id="aging-cards"></div>
         </div>
         <div class="two-col">
           <div class="panel"><div class="panel-header"><span class="panel-title">Revenue by Project Type</span></div><div style="padding:14px"><div id="revenue-breakdown"></div></div></div>
@@ -978,6 +989,14 @@ select option{background:var(--surface2);}
                     <option value="-">— General / No Project —</option>
                   </select>
                 </div>
+              </div>
+              <div style="display:flex;gap:0;border:1px solid var(--border);">
+                <button type="button" id="tt-loc-gps" onclick="ttSetLocationMethod('gps')" style="flex:1;background:var(--surface);color:var(--accent);border:none;border-right:1px solid var(--border);padding:9px;font-family:var(--fm);font-size:10px;letter-spacing:1px;cursor:pointer;">📍 CURRENT LOCATION</button>
+                <button type="button" id="tt-loc-pin" onclick="ttSetLocationMethod('pin')" style="flex:1;background:var(--surface2);color:var(--text3);border:none;padding:9px;font-family:var(--fm);font-size:10px;letter-spacing:1px;cursor:pointer;">📌 DROP PIN</button>
+              </div>
+              <div id="tt-pin-map-wrap" style="display:none;">
+                <div id="tt-pin-map" style="height:220px;border:1px solid var(--border);"></div>
+                <div style="font-family:var(--fm);font-size:9px;color:var(--text3);letter-spacing:1px;padding:6px 2px;">Tap the map to place a pin at the correct site location</div>
               </div>
               <div id="tt-location-display" style="background:var(--surface2);border:1px solid var(--border);padding:10px 12px;font-family:var(--fm);font-size:10px;color:var(--text3);letter-spacing:1px;min-height:38px;display:flex;align-items:center;gap:8px;">
                 <span>📍</span><span id="tt-location-text">Location will be captured on clock-in</span>

@@ -1034,6 +1034,7 @@ function renderClientCards() {
         <button class="action-btn" onclick="editClient(${i})">Edit</button>
         <button class="action-btn" onclick="showFormShareModal('${safeId}','${safeName}','${safePhone}','${safeEmail}','${safeType}')" style="color:var(--accent);border-color:var(--accent);">📋 Send Form</button>
         <button class="action-btn" onclick="showPortalShareModal('${safeId}','${safeName}','${safePhone}','${safeEmail}')" style="color:var(--blue);border-color:var(--blue);">🔗 Portal</button>
+        <button class="action-btn" onclick="previewStatement('${safeId}','${safeName}')" style="color:var(--purple);border-color:var(--purple);">🧾 Statement</button>
         <button class="action-btn danger" onclick="deleteItem('clients',${i})">Delete</button>
       </div>
     </div>`;
@@ -1422,6 +1423,7 @@ function renderClients() {
         <button class="action-btn" onclick="editClient(${i})">Edit</button>
         <button class="action-btn" onclick="showFormShareModal('${c.id}','${c.name.replace(/'/g,"\\'")}','${c.phone}','${c.email}','${c.type}')" style="color:var(--accent);border-color:var(--accent);" title="Send intake form to client">📋</button>
         <button class="action-btn" onclick="showPortalShareModal('${c.id}','${c.name.replace(/'/g,"\\'")}','${c.phone}','${c.email}')" style="color:var(--blue);border-color:var(--blue);" title="Send client portal access">🔗</button>
+        <button class="action-btn" onclick="previewStatement('${c.id}','${c.name.replace(/'/g,"\\'")}')" style="color:var(--purple);border-color:var(--purple);" title="Statement of account">🧾</button>
         <button class="action-btn danger" onclick="deleteItem('clients',${i})">Del</button>
       </td>
     </tr>`).join('');
@@ -1582,10 +1584,277 @@ function renderReports() {
         </tr>`).join('');
     }
   }
+
+  renderAgingReport();
+}
+
+// ══════════════════════════════════════════════════════
+// ── ACCOUNTS RECEIVABLE AGING + CLIENT STATEMENTS ──
+// ══════════════════════════════════════════════════════
+
+// Net outstanding per client, bucketed by days overdue against due date.
+// Credit notes are netted against their specific original invoice (via
+// originalInvoiceId), not lumped as a global subtraction — so a client
+// with one overdue invoice and one unrelated credit note doesn't show
+// an artificially reduced aging figure.
+function computeAging() {
+  const today = new Date();
+  const byClient = {};
+  const regular = store.invoices.filter(i => i.type !== 'credit');
+  const credits = store.invoices.filter(i => i.type === 'credit');
+
+  regular.forEach(inv => {
+    if (inv.status === 'paid' || inv.status === 'draft') return;
+    const creditTotal = credits.filter(c => c.originalInvoiceId === inv.id).reduce((s, c) => s + c.amount, 0);
+    const net = Math.round((inv.amount - creditTotal) * 100) / 100;
+    if (net <= 0) return;
+
+    if (!byClient[inv.client]) byClient[inv.client] = { client: inv.client, current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90plus: 0, total: 0 };
+    const b = byClient[inv.client];
+    const due = inv.due ? new Date(inv.due) : today;
+    const daysOverdue = Math.floor((today - due) / 86400000);
+
+    if (daysOverdue <= 0) b.current += net;
+    else if (daysOverdue <= 30) b.d1_30 += net;
+    else if (daysOverdue <= 60) b.d31_60 += net;
+    else if (daysOverdue <= 90) b.d61_90 += net;
+    else b.d90plus += net;
+    b.total += net;
+  });
+
+  return Object.values(byClient).sort((a, b) => b.total - a.total);
+}
+
+function renderAgingReport() {
+  const aging = computeAging();
+  const totals = aging.reduce((s, r) => ({
+    current: s.current + r.current, d1_30: s.d1_30 + r.d1_30, d31_60: s.d31_60 + r.d31_60,
+    d61_90: s.d61_90 + r.d61_90, d90plus: s.d90plus + r.d90plus, total: s.total + r.total
+  }), { current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90plus: 0, total: 0 });
+
+  const statEl = document.getElementById('aging-stats');
+  if (statEl) statEl.innerHTML = `
+    <div class="stat-cell"><div class="stat-cell-value" style="color:var(--accent)">${fmt(totals.total)}</div><div class="stat-cell-label">Total Outstanding</div></div>
+    <div class="stat-cell"><div class="stat-cell-value">${fmt(totals.current)}</div><div class="stat-cell-label">Current</div></div>
+    <div class="stat-cell"><div class="stat-cell-value">${fmt(totals.d1_30)}</div><div class="stat-cell-label">1-30 Days</div></div>
+    <div class="stat-cell"><div class="stat-cell-value" style="color:var(--accent)">${fmt(totals.d31_60)}</div><div class="stat-cell-label">31-60 Days</div></div>
+    <div class="stat-cell"><div class="stat-cell-value" style="color:var(--red)">${fmt(totals.d61_90)}</div><div class="stat-cell-label">61-90 Days</div></div>
+    <div class="stat-cell"><div class="stat-cell-value" style="color:var(--red)">${fmt(totals.d90plus)}</div><div class="stat-cell-label">90+ Days</div></div>
+  `;
+
+  const rowHtml = (r) => {
+    const client = store.clients.find(c => c.name === r.client);
+    const cid = client ? client.id : '';
+    const cname = r.client.replace(/'/g, "\\'");
+    return { client, cid, cname };
+  };
+
+  const body = document.getElementById('aging-body');
+  if (body) {
+    body.innerHTML = aging.length === 0
+      ? `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text3);font-family:var(--fm);font-size:11px;">No outstanding invoices — all accounts current ✓</td></tr>`
+      : aging.map(r => {
+        const { cid, cname } = rowHtml(r);
+        return `<tr>
+          <td><strong>${r.client}</strong></td>
+          <td style="font-family:var(--fm);${r.current>0?'':'color:var(--text3)'}">${r.current>0?fmt(r.current):'—'}</td>
+          <td style="font-family:var(--fm);${r.d1_30>0?'':'color:var(--text3)'}">${r.d1_30>0?fmt(r.d1_30):'—'}</td>
+          <td style="font-family:var(--fm);${r.d31_60>0?'color:var(--accent)':'color:var(--text3)'}">${r.d31_60>0?fmt(r.d31_60):'—'}</td>
+          <td style="font-family:var(--fm);${r.d61_90>0?'color:var(--red)':'color:var(--text3)'}">${r.d61_90>0?fmt(r.d61_90):'—'}</td>
+          <td style="font-family:var(--fm);${r.d90plus>0?'color:var(--red)':'color:var(--text3)'}">${r.d90plus>0?fmt(r.d90plus):'—'}</td>
+          <td style="font-family:var(--fm);color:var(--accent);font-weight:600">${fmt(r.total)}</td>
+          <td><button class="action-btn" onclick="previewStatement('${cid}','${cname}')" style="color:var(--purple);border-color:var(--purple)">🧾 Statement</button></td>
+        </tr>`;
+      }).join('');
+  }
+
+  const cardsEl = document.getElementById('aging-cards');
+  if (cardsEl) {
+    cardsEl.innerHTML = aging.length === 0
+      ? `<div style="text-align:center;padding:20px;color:var(--text3);font-family:var(--fm);font-size:11px;">No outstanding invoices — all accounts current ✓</div>`
+      : aging.map(r => {
+        const { cid, cname } = rowHtml(r);
+        const worst = r.d90plus>0?'90+ DAYS':r.d61_90>0?'61-90 DAYS':r.d31_60>0?'31-60 DAYS':r.d1_30>0?'1-30 DAYS':'CURRENT';
+        const worstColor = (r.d90plus>0||r.d61_90>0)?'var(--red)':r.d31_60>0?'var(--accent)':'var(--text2)';
+        return `<div class="card-item">
+          <div class="card-item-header"><div class="card-item-title">${r.client}</div><span class="badge" style="background:transparent;color:${worstColor};border:1px solid ${worstColor}">${worst}</span></div>
+          <div class="card-item-row"><span style="color:var(--text3)">Total Outstanding</span><span style="font-family:var(--fm);color:var(--accent);font-size:15px">${fmt(r.total)}</span></div>
+          <div class="card-item-actions">
+            <button class="action-btn" onclick="previewStatement('${cid}','${cname}')" style="color:var(--purple);border-color:var(--purple)">🧾 Send Statement</button>
+          </div>
+        </div>`;
+      }).join('');
+  }
+}
+
+function exportAgingCSV() {
+  const aging = computeAging();
+  if (aging.length === 0) { toast('No outstanding invoices to export'); return; }
+  const rows = [['Client','Current','1-30 Days','31-60 Days','61-90 Days','90+ Days','Total Outstanding']];
+  aging.forEach(r => rows.push([r.client, r.current.toFixed(2), r.d1_30.toFixed(2), r.d31_60.toFixed(2), r.d61_90.toFixed(2), r.d90plus.toFixed(2), r.total.toFixed(2)]));
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'OttosERP_AgingReport_' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click(); URL.revokeObjectURL(url);
+  toast('Aging report exported ✓');
+}
+
+// Client Statement: an honest listing of every invoice for a client and its
+// net outstanding balance. Deliberately NOT a bank-style running ledger with
+// payment-event timestamps — paidDate only exists going forward from the
+// markPaid() fix, and older paid invoices have no real payment date on
+// record. Fabricating one would put an inaccurate date on a document sent
+// to a client. This shows exactly what the data actually supports.
+function buildStatementHTML(clientId, clientNameFallback) {
+  const client = store.clients.find(c => c.id === clientId) || { name: clientNameFallback || 'Client', phone: '', email: '' };
+  const clientName = client.name;
+  const invoices = store.invoices.filter(i => i.client === clientName && i.type !== 'credit').sort((a, b) => new Date(a.issued || 0) - new Date(b.issued || 0));
+  const credits  = store.invoices.filter(i => i.client === clientName && i.type === 'credit');
+
+  const rows = invoices.map(inv => {
+    const relatedCredits = credits.filter(c => c.originalInvoiceId === inv.id);
+    const creditTotal = relatedCredits.reduce((s, c) => s + c.amount, 0);
+    const net = inv.status === 'paid' ? 0 : Math.max(0, Math.round((inv.amount - creditTotal) * 100) / 100);
+    return { ...inv, creditTotal, net };
+  });
+
+  const totalInvoiced = rows.reduce((s, r) => s + r.amount, 0);
+  const totalCredited = rows.reduce((s, r) => s + r.creditTotal, 0);
+  const totalPaid = rows.filter(r => r.status === 'paid').reduce((s, r) => s + r.amount, 0);
+  const totalOutstanding = rows.reduce((s, r) => s + r.net, 0);
+
+  const statusStamp = s => {
+    const m = { paid:'#4caf7d', overdue:'#e05252', sent:'#d4a843', draft:'#8a7040' };
+    return `<span style="font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:1px;text-transform:uppercase;color:${m[s]||'#8a7040'};border:1px solid ${m[s]||'#8a7040'};padding:2px 6px;">${s}</span>`;
+  };
+
+  const lineRows = rows.length === 0 ? `<tr><td colspan="6" style="padding:16px;text-align:center;color:#8a7040;font-size:12px;">No invoices on record for this client</td></tr>` : rows.map(r => `
+    <tr>
+      <td style="padding:8px 12px;border-bottom:1px solid #e8d89a;font-size:12px;">${dt(r.issued)}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e8d89a;font-size:12px;">${r.id}${r.creditTotal>0?`<div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:#9b72cf;margin-top:2px;">Credited: R ${r.creditTotal.toLocaleString('en-ZA',{minimumFractionDigits:2})}</div>`:''}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e8d89a;font-size:12px;">${r.project||r.desc||''}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e8d89a;text-align:center;">${statusStamp(r.status)}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e8d89a;text-align:right;font-family:'IBM Plex Mono',monospace;font-size:12px;">R ${r.amount.toLocaleString('en-ZA',{minimumFractionDigits:2})}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e8d89a;text-align:right;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;${r.net>0?'color:#b23a3a':'color:#2c6e49'}">${r.net>0?'R '+r.net.toLocaleString('en-ZA',{minimumFractionDigits:2}):'PAID IN FULL'}</td>
+    </tr>`).join('');
+
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Statement of Account — ${clientName}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap" rel="stylesheet">
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;} body{font-family:'IBM Plex Sans',sans-serif;font-size:13px;color:#1a1200;background:#fff;}
+    @page{size:A4;margin:14mm;} @media print{.no-print{display:none!important;}}
+    .page{max-width:800px;margin:0 auto;padding:32px 36px;}
+    .doc-header{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:20px;border-bottom:3px solid #d4a843;margin-bottom:24px;}
+    .brand-name{font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:600;color:#b8822a;}
+    .brand-tagline{font-size:10px;color:#8a7040;letter-spacing:1px;margin-top:3px;text-transform:uppercase;}
+    .brand-contact{font-size:11px;color:#5a4a20;line-height:1.7;margin-top:6px;}
+    .doc-type{font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:600;color:#1a1200;letter-spacing:1px;text-align:right;}
+    .doc-num{font-family:'IBM Plex Mono',monospace;font-size:11px;color:#b8822a;text-align:right;margin-top:4px;}
+    .line-table{width:100%;border-collapse:collapse;}
+    .line-table thead tr{background:#d4a843;}
+    .line-table thead th{padding:9px 12px;text-align:left;font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:1px;text-transform:uppercase;color:#1a1200;}
+    .totals-block{width:280px;margin-left:auto;margin-top:0;border:1px solid #e8d89a;}
+    .total-row{display:flex;justify-content:space-between;padding:7px 14px;font-size:13px;border-bottom:1px solid #e8d89a;}
+    .total-row.grand{background:#d4a843;font-weight:700;font-size:15px;}
+    .total-val{font-family:'IBM Plex Mono',monospace;font-weight:600;}
+    .print-toolbar{background:#1a1200;padding:12px 24px;display:flex;align-items:center;gap:12px;position:sticky;top:0;}
+    .ptbtn{padding:8px 16px;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;letter-spacing:1px;cursor:pointer;border:none;}
+    .ptbtn.primary{background:#d4a843;color:#1a1200;}
+    .ptbtn.secondary{background:transparent;color:#d4a843;border:1px solid #d4a843;}
+  </style></head><body>
+  <div class="print-toolbar no-print">
+    <button class="ptbtn primary" onclick="window.print()">⬇ DOWNLOAD / PRINT PDF</button>
+    <button class="ptbtn secondary" onclick="window.close()">✕ CLOSE</button>
+  </div>
+  <div class="page">
+    <div class="doc-header">
+      <div>
+        <div class="brand-name">${COMPANY.name}</div>
+        <div class="brand-tagline">${COMPANY.tagline}</div>
+        <div class="brand-contact">${COMPANY.address}<br>Heino: 062 274 9921 &nbsp;·&nbsp; Jaco: 072 470 6471<br><em>Not VAT Registered</em></div>
+      </div>
+      <div>
+        <div class="doc-type">STATEMENT OF ACCOUNT</div>
+        <div class="doc-num">As at ${new Date().toLocaleDateString('en-ZA',{day:'numeric',month:'long',year:'numeric'})}</div>
+      </div>
+    </div>
+    <div style="margin-bottom:16px;"><strong>${clientName}</strong>${client.phone?`<br><span style="font-size:12px;color:#5a4a20">${client.phone}</span>`:''}</div>
+    <table class="line-table"><thead><tr><th style="width:12%">Date</th><th style="width:18%">Invoice</th><th style="width:28%">Project</th><th style="width:12%;text-align:center">Status</th><th style="width:15%;text-align:right">Amount</th><th style="width:15%;text-align:right">Balance Due</th></tr></thead><tbody>${lineRows}</tbody></table>
+    <div style="display:flex;margin-top:0;border:1px solid #e8d89a;border-top:none;">
+      <div style="flex:1;padding:14px;background:#fdf8ec;border-right:1px solid #e8d89a;">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#8a7040;margin-bottom:6px;">Notes</div>
+        <div style="font-size:11px;color:#4a3a10;line-height:1.6;">${COMPANY.paymentTerms}</div>
+      </div>
+      <div class="totals-block" style="border:none;border-left:1px solid #e8d89a;">
+        <div class="total-row"><span>Total Invoiced</span><span class="total-val">R ${totalInvoiced.toLocaleString('en-ZA',{minimumFractionDigits:2})}</span></div>
+        <div class="total-row"><span>Total Paid</span><span class="total-val" style="color:#2c6e49">R ${totalPaid.toLocaleString('en-ZA',{minimumFractionDigits:2})}</span></div>
+        ${totalCredited>0?`<div class="total-row"><span>Total Credited</span><span class="total-val" style="color:#9b72cf">R ${totalCredited.toLocaleString('en-ZA',{minimumFractionDigits:2})}</span></div>`:''}
+        <div class="total-row grand"><span>BALANCE DUE</span><span class="total-val">R ${totalOutstanding.toLocaleString('en-ZA',{minimumFractionDigits:2})}</span></div>
+      </div>
+    </div>
+    <div style="margin-top:24px;padding-top:14px;border-top:1px solid #e8d89a;">
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#8a7040;margin-bottom:5px;">Banking Details</div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#1a1200;">${COMPANY.bank}</div>
+    </div>
+  </div>
+  </body></html>`;
+}
+
+function previewStatement(clientId, clientNameFallback) {
+  const html = buildStatementHTML(clientId, clientNameFallback);
+  const w = window.open('', '_blank', 'width=900,height=750');
+  if (!w) { toast('Allow pop-ups to open the statement'); return; }
+  w.document.write(html);
+  w.document.close();
+}
+
+function shareStatementWhatsApp(clientId, clientNameFallback) {
+  const client = store.clients.find(c => c.id === clientId) || { name: clientNameFallback, phone: '' };
+  const invoices = store.invoices.filter(i => i.client === client.name && i.type !== 'credit');
+  const credits = store.invoices.filter(i => i.client === client.name && i.type === 'credit');
+  const outstanding = invoices.filter(i => i.status !== 'paid').reduce((s, i) => {
+    const cr = credits.filter(c => c.originalInvoiceId === i.id).reduce((s2, c) => s2 + c.amount, 0);
+    return s + Math.max(0, i.amount - cr);
+  }, 0);
+  const msg = encodeURIComponent(
+`*${COMPANY.name}*
+📄 STATEMENT OF ACCOUNT
+
+Dear ${client.name},
+
+Please find attached your account statement as at ${new Date().toLocaleDateString('en-ZA')}.
+
+*Balance Due: R ${outstanding.toLocaleString('en-ZA')}*
+
+Banking: ${COMPANY.bank}
+
+*Heino v Niekerk:* 062 274 9921
+*Jaco Brits:* 072 470 6471`);
+  window.open('https://wa.me/' + (client.phone||'').replace(/\D/g,'') + '?text=' + msg, '_blank');
+}
+
+function shareStatementEmail(clientId, clientNameFallback) {
+  const client = store.clients.find(c => c.id === clientId) || { name: clientNameFallback, email: '' };
+  const subject = encodeURIComponent(`Statement of Account — ${COMPANY.name}`);
+  const body = encodeURIComponent(
+`Dear ${client.name},
+
+Please find your account statement as at ${new Date().toLocaleDateString('en-ZA')} attached / linked.
+
+Banking Details: ${COMPANY.bank}
+
+Kind regards,
+Otto's Renovation & Beautification
+
+Heino v Niekerk: 062 274 9921 | vanniekerkheino52@gmail.com
+Jaco Brits: 072 470 6471 | jaco.brits@hotmail.com`);
+  window.location.href = `mailto:${client.email||''}?subject=${subject}&body=${body}`;
 }
 
 // ── ACTIONS ──
-function markPaid(i) { store.invoices[i].status='paid'; save(); syncClientPortal(store.invoices[i].client); renderInvoices(); toast('Invoice marked as paid ✓'); }
+function markPaid(i) { store.invoices[i].status='paid'; store.invoices[i].paidDate = new Date().toISOString().split('T')[0]; save(); syncClientPortal(store.invoices[i].client); renderInvoices(); toast('Invoice marked as paid ✓'); }
 function toggleJobStatus(i) { const c={open:'in-progress','in-progress':'done',done:'open'}; store.jobs[i].status=c[store.jobs[i].status]||'open'; save(); renderJobs(); toast('Status updated ✓'); }
 function changeQuoteStatus(i, newStatus) {
   const q = store.quotes[i];
@@ -2761,18 +3030,96 @@ function renderTimeTrack() {
   updateActiveSessionBadge();
 }
 
+// ── Location method: GPS auto-capture (default) or manual pin drop ──
+// Pin drop covers cases GPS alone doesn't: clocking a crew member in
+// remotely, correcting an inaccurate reading, or a denied location
+// permission. Leaflet + OpenStreetMap tiles — free, no API key, matches
+// the existing Nominatim reverse-geocode pattern already used below.
+let ttLocationMethod = 'gps';
+let ttPinLocation = null;
+let ttPinMap = null;
+let ttPinMarker = null;
+
+function ttSetLocationMethod(method) {
+  ttLocationMethod = method;
+  const gpsBtn = document.getElementById('tt-loc-gps');
+  const pinBtn = document.getElementById('tt-loc-pin');
+  const mapWrap = document.getElementById('tt-pin-map-wrap');
+  const locText = document.getElementById('tt-location-text');
+  if (method === 'gps') {
+    if (gpsBtn) { gpsBtn.style.background = 'var(--surface)'; gpsBtn.style.color = 'var(--accent)'; }
+    if (pinBtn) { pinBtn.style.background = 'var(--surface2)'; pinBtn.style.color = 'var(--text3)'; }
+    if (mapWrap) mapWrap.style.display = 'none';
+    ttPinLocation = null;
+    if (locText) locText.textContent = 'Location will be captured on clock-in';
+  } else {
+    if (pinBtn) { pinBtn.style.background = 'var(--surface)'; pinBtn.style.color = 'var(--accent)'; }
+    if (gpsBtn) { gpsBtn.style.background = 'var(--surface2)'; gpsBtn.style.color = 'var(--text3)'; }
+    if (mapWrap) mapWrap.style.display = 'block';
+    if (locText) locText.textContent = 'Tap the map above to set the pin location';
+    setTimeout(ttInitPinMap, 50); // let the now-visible container get real dimensions before Leaflet measures it
+  }
+}
+
+function ttInitPinMap() {
+  if (typeof L === 'undefined') { toast('⚠ Map failed to load — check your connection, or use Current Location instead'); return; }
+  const mapEl = document.getElementById('tt-pin-map');
+  if (!mapEl) return;
+
+  const defaultCenter = [-25.7479, 28.2293]; // Otto's business address, Pretoria — starting point only
+
+  if (!ttPinMap) {
+    ttPinMap = L.map('tt-pin-map').setView(defaultCenter, 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors', maxZoom: 19
+    }).addTo(ttPinMap);
+    ttPinMap.on('click', (e) => ttPlacePin(e.latlng.lat, e.latlng.lng));
+  } else {
+    setTimeout(() => ttPinMap.invalidateSize(), 100);
+  }
+
+  // Nudge the map toward the device's actual location as a starting point —
+  // still requires a tap to confirm/adjust, just saves panning the whole map.
+  if (navigator.geolocation && !ttPinLocation) {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { ttPinMap.setView([pos.coords.latitude, pos.coords.longitude], 16); },
+      () => {}, // silent — map stays on the default center, still fully usable
+      { timeout: 5000 }
+    );
+  }
+}
+
+async function ttPlacePin(lat, lng) {
+  if (ttPinMarker && ttPinMap) ttPinMap.removeLayer(ttPinMarker);
+  ttPinMarker = L.marker([lat, lng]).addTo(ttPinMap);
+  ttPinLocation = { lat: lat.toFixed(6), lng: lng.toFixed(6), address: 'Looking up address...' };
+  const locText = document.getElementById('tt-location-text');
+  if (locText) locText.textContent = '📌 Pin set — looking up address...';
+
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=16`, { headers: { 'Accept-Language': 'en' } });
+    const geo = await r.json();
+    ttPinLocation.address = geo.display_name ? geo.display_name.split(',').slice(0, 3).join(', ') : `${ttPinLocation.lat}, ${ttPinLocation.lng}`;
+  } catch {
+    ttPinLocation.address = `${ttPinLocation.lat}, ${ttPinLocation.lng}`;
+  }
+  if (locText) locText.textContent = '📌 ' + ttPinLocation.address;
+}
+
 // ── Clock In ──
 async function clockIn() {
   const worker  = document.getElementById('tt-worker')?.value;
   const project = document.getElementById('tt-project')?.value || '-';
   if (!worker) { toast('Select a worker first'); return; }
 
+  if (ttLocationMethod === 'pin' && !ttPinLocation) { toast('Tap the map to drop a pin first'); return; }
+
   // Check not already clocked in
   const already = (store.timeSessions || []).find(s => s.worker === worker && s.clockOut === null);
   if (already) { toast(`${worker} already has an open session`); return; }
 
   const btn = document.getElementById('tt-clockin-btn');
-  btn.textContent = '◌ LOCATING...';
+  btn.textContent = ttLocationMethod === 'pin' ? '◌ SAVING...' : '◌ LOCATING...';
   btn.disabled = true;
 
   const session = {
@@ -2786,10 +3133,14 @@ async function clockIn() {
     lng:      null,
     address:  'Locating...',
     device:   DEVICE_ID,
+    locationMethod: ttLocationMethod,
   };
 
-  // Attempt GPS
-  if (navigator.geolocation) {
+  if (ttLocationMethod === 'pin' && ttPinLocation) {
+    session.lat = ttPinLocation.lat;
+    session.lng = ttPinLocation.lng;
+    session.address = ttPinLocation.address;
+  } else if (navigator.geolocation) {
     try {
       const pos = await new Promise((res, rej) =>
         navigator.geolocation.getCurrentPosition(res, rej, { timeout: 8000, maximumAge: 0 })
@@ -2811,8 +3162,12 @@ async function clockIn() {
 
   if (!store.timeSessions) store.timeSessions = [];
   store.timeSessions.unshift(session);
-  store.activity.unshift({ text: `${worker} clocked in — ${session.address}`, time: 'Just now', type: 'green' });
+  store.activity.unshift({ text: `${worker} clocked in — ${session.address}${session.locationMethod==='pin'?' (pin dropped)':''}`, time: 'Just now', type: 'green' });
   save();
+
+  // Reset pin state so the next clock-in starts fresh
+  ttPinLocation = null;
+  if (ttPinMarker && ttPinMap) { ttPinMap.removeLayer(ttPinMarker); ttPinMarker = null; }
 
   setClockUI(true, session);
   startElapsedTimer(new Date(session.clockIn));
