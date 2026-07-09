@@ -3039,6 +3039,31 @@ let ttLocationMethod = 'gps';
 let ttPinLocation = null;
 let ttPinMap = null;
 let ttPinMarker = null;
+let ttLeafletLoadPromise = null;
+
+// Loaded on-demand only, never at page load — a blocking <script> tag in
+// <head> was tried first and caused a real regression: on a slow/unstable
+// job-site connection it stalled ALL script execution (including core.js
+// itself) until the CDN request resolved, breaking clock in/out entirely
+// even for people who never touch Drop Pin. Dynamic injection here means
+// the default GPS path never depends on this request at all.
+function ttLoadLeaflet() {
+  if (window.L) return Promise.resolve();
+  if (ttLeafletLoadPromise) return ttLeafletLoadPromise;
+  ttLeafletLoadPromise = new Promise((resolve, reject) => {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    document.head.appendChild(link);
+
+    const script = document.createElement('script');
+    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    script.onload = () => resolve();
+    script.onerror = () => { ttLeafletLoadPromise = null; reject(new Error('Leaflet failed to load')); };
+    document.head.appendChild(script);
+  });
+  return ttLeafletLoadPromise;
+}
 
 function ttSetLocationMethod(method) {
   ttLocationMethod = method;
@@ -3056,8 +3081,13 @@ function ttSetLocationMethod(method) {
     if (pinBtn) { pinBtn.style.background = 'var(--surface)'; pinBtn.style.color = 'var(--accent)'; }
     if (gpsBtn) { gpsBtn.style.background = 'var(--surface2)'; gpsBtn.style.color = 'var(--text3)'; }
     if (mapWrap) mapWrap.style.display = 'block';
-    if (locText) locText.textContent = 'Tap the map above to set the pin location';
-    setTimeout(ttInitPinMap, 50); // let the now-visible container get real dimensions before Leaflet measures it
+    if (locText) locText.textContent = 'Loading map...';
+    ttLoadLeaflet().then(() => {
+      setTimeout(ttInitPinMap, 50); // let the now-visible container get real dimensions before Leaflet measures it
+    }).catch(() => {
+      toast('⚠ Map failed to load — check your connection, or use Current Location instead');
+      if (locText) locText.textContent = 'Map unavailable — tap Current Location instead';
+    });
   }
 }
 
