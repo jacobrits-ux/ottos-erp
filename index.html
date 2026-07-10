@@ -977,7 +977,7 @@ select option{background:var(--surface2);}
               <div class="form-grid">
                 <div class="form-group">
                   <label>Worker</label>
-                  <select id="tt-worker">
+                  <select id="tt-worker" onchange="ttUpdateClockUIForSelectedWorker()">
                     <option value="">— Select Worker —</option>
                   </select>
                 </div>

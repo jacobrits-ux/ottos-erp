@@ -3008,6 +3008,22 @@ let ttElapsedTimer = null;   // interval handle for live clock
 let ttWeekOffset  = 0;       // 0 = current week, -1 = last week, etc.
 
 // ── Render the full Time Tracking page ──
+// Shows the right Clock In/Out state for whichever worker is currently
+// selected — a shared-device panel needs to reflect each worker's own
+// status individually, since several can be clocked in at once.
+function ttUpdateClockUIForSelectedWorker() {
+  const worker = document.getElementById('tt-worker')?.value;
+  if (!worker) { clearInterval(ttElapsedTimer); setClockUI(false, null); return; }
+  const openSession = (store.timeSessions || []).find(s => s.worker === worker && s.clockOut === null);
+  if (openSession) {
+    setClockUI(true, openSession);
+    startElapsedTimer(new Date(openSession.clockIn));
+  } else {
+    clearInterval(ttElapsedTimer);
+    setClockUI(false, null);
+  }
+}
+
 function renderTimeTrack() {
   // Populate dropdowns
   const workerSel  = document.getElementById('tt-worker');
@@ -3015,14 +3031,12 @@ function renderTimeTrack() {
   if (workerSel)  workerSel.innerHTML  = '<option value="">— Select Worker —</option>' + store.crew.map(c => `<option value="${c.name}">${c.name} (${c.role})</option>`).join('');
   if (projectSel) projectSel.innerHTML = '<option value="-">— General / No Project —</option>' + store.projects.filter(p => p.status === 'active').map(p => `<option value="${p.id}">${p.id} — ${p.name}</option>`).join('');
 
-  // Check if current user has an open session — restore UI
-  const myOpen = (store.timeSessions || []).find(s => s.clockOut === null && s.device === DEVICE_ID);
-  if (myOpen) {
-    setClockUI(true, myOpen);
-    startElapsedTimer(new Date(myOpen.clockIn));
-  } else {
-    setClockUI(false, null);
-  }
+  // Clock In/Out state reflects whichever worker is currently selected in the
+  // dropdown — NOT "this device" as a whole. A single device (Jaco's or
+  // Heino's phone) manages the whole crew, so several different workers can
+  // be clocked in at once; the panel just needs to show the right state for
+  // whoever is currently selected, and switching the dropdown re-evaluates it.
+  ttUpdateClockUIForSelectedWorker();
 
   renderActiveSessions();
   renderWeeklySummary();
