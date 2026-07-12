@@ -373,7 +373,7 @@ function getFormUrl(clientId) {
   const pid  = cfg.projectId || '';
   if (!base || !pid) return null;
   // Form is embedded in the ERP itself — same file, different URL params
-  return `${base}/construction-erp.html?form=${clientId}&pid=${pid}`;
+  return `${base}/index.html?form=${clientId}&pid=${pid}`;
 }
 
 // ══════════════════════════════════════════════════════
