@@ -766,8 +766,15 @@ function importFormSubmission(idx) {
       accessInstructions: f.accessInstructions || c.accessInstructions || '',
       securityRequirements: f.securityRequirements || c.securityRequirements || '',
       invoiceTo:   f.invoiceTo     || c.invoiceTo   || '',
+      invoiceAttn: f.invoiceAttn   || c.invoiceAttn || '',
       invoiceEmail: f.invoiceEmail || c.invoiceEmail || '',
+      accContact:  f.accContact    || c.accContact  || '',
+      accPhone:    f.accPhone      || c.accPhone    || '',
       poNumber:    f.poNumber      || c.poNumber    || '',
+      costCentre:  f.costCentre    || c.costCentre  || '',
+      invVat:      f.invVat        || c.invVat      || '',
+      billingAddress: [f.billAddr1, f.billAddr2].filter(Boolean).join(', ') || c.billingAddress || '',
+      invExtra:    f.invExtra      || c.invExtra    || '',
       emName:      f.emName        || c.emName      || '',
       emPhone:     f.emPhone       || c.emPhone     || '',
       serviceRequired: f.serviceRequired || c.serviceRequired || '',
@@ -795,7 +802,15 @@ function importFormSubmission(idx) {
       gpsCoords:    f.gpsCoords     || '',
       accessInstructions: f.accessInstructions || '',
       invoiceTo:    f.invoiceTo     || '',
+      invoiceAttn:  f.invoiceAttn   || '',
       invoiceEmail: f.invoiceEmail  || '',
+      accContact:   f.accContact    || '',
+      accPhone:     f.accPhone      || '',
+      poNumber:     f.poNumber      || '',
+      costCentre:   f.costCentre    || '',
+      invVat:       f.invVat        || '',
+      billingAddress: [f.billAddr1, f.billAddr2].filter(Boolean).join(', '),
+      invExtra:     f.invExtra      || '',
       emName:       f.emName        || '',
       emPhone:      f.emPhone       || '',
       serviceRequired: f.serviceRequired || '',
@@ -2525,6 +2540,8 @@ function buildDocHTML(type, item, vatRate = 0) {
   const isCredit = item.type === 'credit';
   const docTitle = isCredit ? 'CREDIT NOTE' : (isInv ? 'TAX INVOICE' : 'QUOTATION');
   const docColor = isCredit ? '#9b72cf' : '#d4a843';
+  // Pull invoicing details from the client record (set via intake form or client edit) if available
+  const clientRec = store.clients.find(c => c.name === item.client);
 
   const statusColor = item.status === 'paid'   ? '#4caf7d'
                     : item.status === 'overdue' ? '#e05252'
@@ -2656,8 +2673,13 @@ function buildDocHTML(type, item, vatRate = 0) {
   <div class="bill-section">
     <div class="bill-to">
       <div class="bill-label">${isCredit ? 'Credit Issued To' : 'Bill To / Prepared For'}</div>
-      <div class="bill-name">${item.client}</div>
+      <div class="bill-name">${(clientRec && clientRec.invoiceTo) || item.client}</div>
+      ${clientRec && clientRec.invoiceAttn ? `<div class="bill-detail">Attn: ${clientRec.invoiceAttn}</div>` : ''}
+      ${clientRec && clientRec.billingAddress ? `<div class="bill-detail">${clientRec.billingAddress}</div>` : ''}
       <div class="bill-detail">${isInv ? (item.desc || item.project) : (item.desc||'')}</div>
+      ${clientRec && clientRec.poNumber ? `<div class="bill-detail">PO Ref: ${clientRec.poNumber}</div>` : ''}
+      ${clientRec && clientRec.costCentre ? `<div class="bill-detail">Cost Centre: ${clientRec.costCentre}</div>` : ''}
+      ${clientRec && clientRec.invVat ? `<div class="bill-detail">Client VAT No: ${clientRec.invVat}</div>` : ''}
     </div>
     ${isInv && !isCredit ? `<div class="bill-to"><div class="bill-label">Project Reference</div><div class="bill-name">${item.project}</div></div>` : ''}
     ${isCredit ? `<div class="bill-to"><div class="bill-label">Credits Against Invoice</div><div class="bill-name" style="color:#9b72cf">${item.originalInvoiceId||'—'}</div><div class="bill-detail">${item.desc||''}</div></div>` : ''}
@@ -2767,15 +2789,16 @@ function shareEmail(type, i) {
   const isInv = type === 'invoice';
   const vatAmt = 0;
   const total = item.amount;
+  const client = store.clients.find(c => c.name === item.client);
   const subject = encodeURIComponent(`${isInv ? 'Invoice' : 'Quotation'} ${item.id} — ${COMPANY.name}`);
   const body = encodeURIComponent(
-`Dear ${item.client},
+`Dear ${(client && client.invoiceAttn) || item.client},
 
 Please find ${isInv ? 'your invoice' : 'our quotation'} below.
 
 ${isInv ? 'INVOICE' : 'QUOTATION'} NUMBER: ${item.id}
 ${isInv ? `Project: ${item.project}` : `Description: ${item.desc}`}
-
+${client && client.poNumber ? `PO Reference: ${client.poNumber}\n` : ''}
 Amount: R ${item.amount.toLocaleString('en-ZA')}
 VAT:                 Not Applicable (Not VAT Registered)
 TOTAL DUE:           R ${total.toLocaleString('en-ZA')}
@@ -2799,9 +2822,8 @@ Otto's Renovation & Beautification
 Heino v Niekerk: 062 274 9921 | vanniekerkheino52@gmail.com
 Jaco Brits: 072 470 6471 | jaco.brits@hotmail.com`);
 
-  // Get client email if known
-  const client = store.clients.find(c => c.name === item.client);
-  const to = client ? encodeURIComponent(client.email) : '';
+  // Prefer billing/accounts email over primary contact email
+  const to = client ? encodeURIComponent(client.invoiceEmail || client.email) : '';
   window.location.href = `mailto:${to}?subject=${subject}&body=${body}`;
 }
 
