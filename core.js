@@ -207,9 +207,12 @@ function initFirebase() {
     }, err => { console.warn('Firestore listener:', err); updateSyncIndicator('offline'); });
 
     // ── Client intake form submissions listener ──
+    alert('DEBUG: registering clientForms listener now');
     db.collection('clientForms').onSnapshot(snapshot => {
+      alert('DEBUG: clientForms snapshot fired — ' + snapshot.size + ' total docs, ' + snapshot.docChanges().length + ' changes');
       snapshot.docChanges().forEach(change => {
         const data = { id: change.doc.id, ...change.doc.data() };
+        alert('DEBUG: doc ' + change.doc.id + ' status=' + data.status);
         if (data.status === 'submitted' && !processedFormIds.has(data.id)) {
           processedFormIds.add(data.id);
           // Remove existing record for same client if any, then prepend
@@ -220,7 +223,7 @@ function initFirebase() {
           if (currentPage === 'clients') renderClients();
         }
       });
-    }, err => console.warn('ClientForms listener:', err));
+    }, err => alert('DEBUG: clientForms ERROR — code=' + err.code + ' message=' + err.message));
 
     // ── Client portal — quote approve/decline actions from clients ──
     db.collection('clientPortal').onSnapshot(snapshot => {
