@@ -207,12 +207,9 @@ function initFirebase() {
     }, err => { console.warn('Firestore listener:', err); updateSyncIndicator('offline'); });
 
     // ── Client intake form submissions listener ──
-    alert('DEBUG: registering clientForms listener now');
     db.collection('clientForms').onSnapshot(snapshot => {
-      alert('DEBUG: clientForms snapshot fired — ' + snapshot.size + ' total docs, ' + snapshot.docChanges().length + ' changes');
       snapshot.docChanges().forEach(change => {
         const data = { id: change.doc.id, ...change.doc.data() };
-        alert('DEBUG: doc ' + change.doc.id + ' status=' + data.status);
         if (data.status === 'submitted' && !processedFormIds.has(data.id)) {
           processedFormIds.add(data.id);
           // Remove existing record for same client if any, then prepend
@@ -223,7 +220,7 @@ function initFirebase() {
           if (currentPage === 'clients') renderClients();
         }
       });
-    }, err => alert('DEBUG: clientForms ERROR — code=' + err.code + ' message=' + err.message));
+    }, err => console.warn('ClientForms listener:', err));
 
     // ── Client portal — quote approve/decline actions from clients ──
     db.collection('clientPortal').onSnapshot(snapshot => {
@@ -2840,6 +2837,7 @@ let cfToken    = '';
 let cfPid      = '';
 let cfInitData = {};
 let cfSaveTimer = null;
+let cfSubmitted = false; // once true, autosave must never write over the submitted status
 
 function cfFsBase() { return `https://firestore.googleapis.com/v1/projects/${cfPid}/databases/(default)/documents`; }
 
@@ -2972,6 +2970,7 @@ function cfAttachAutoSave() {
 }
 
 async function cfAutoSave() {
+  if (cfSubmitted) return; // never let a stale debounced autosave overwrite a submitted record
   const badge = document.getElementById('cf-autosave');
   if (badge) { badge.textContent = '◌ Saving…'; badge.classList.add('show'); }
   try {
@@ -3008,11 +3007,13 @@ function cfCollect() {
 
 async function cfSubmit() {
   if (!cfValidate(7)) return;
+  clearTimeout(cfSaveTimer); // cancel any pending debounced autosave — it would otherwise fire ~900ms later and overwrite status back to 'in-progress'
   const btn = document.getElementById('cf-btn-submit');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Submitting…'; }
   try {
     const ok = await cfWriteFS(cfToken, { ...cfInitData, ...cfCollect(), status:'submitted', submittedAt: new Date().toISOString() });
     if (!ok) throw new Error('Write failed');
+    cfSubmitted = true;
     const name = cfVal('cf-declName') || cfVal('cf-clientName') || '';
     const el = document.getElementById('cf-success-name'); if (el) el.textContent = name ? name + ',' : '';
     cfScreen('success');
