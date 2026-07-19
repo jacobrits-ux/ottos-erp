@@ -2753,12 +2753,94 @@ function previewDoc(type, i) {
   w.document.close();
 }
 
+// ══════════════════════════════════════════════════════
+// ── PDF GENERATION + NATIVE SHARE (WhatsApp/Email send an actual PDF file) ──
+// ══════════════════════════════════════════════════════
+function loadHtml2Pdf() {
+  return new Promise((resolve, reject) => {
+    if (window.html2pdf) { resolve(); return; }
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('Could not load PDF generator — check internet connection'));
+    document.head.appendChild(s);
+  });
+}
+
+// Renders the same buildDocHTML() output into a hidden iframe (so styles/layout match the
+// print preview exactly) and converts it to a real PDF Blob via html2pdf.js.
+function generateDocPDFBlob(type, item) {
+  return new Promise((resolve, reject) => {
+    loadHtml2Pdf().then(() => {
+      let html = buildDocHTML(type, item);
+      html = html.replace(/<div class="print-toolbar no-print">[\s\S]*?<\/div>\s*/, '');
+      const iframe = document.createElement('iframe');
+      iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:820px;height:1131px;border:0;';
+      document.body.appendChild(iframe);
+      const cleanup = () => { if (iframe.parentNode) document.body.removeChild(iframe); };
+      iframe.onload = () => {
+        const doc = iframe.contentDocument;
+        const target = doc.querySelector('.page') || doc.body;
+        const ready = doc.fonts && doc.fonts.ready ? doc.fonts.ready : new Promise(r => setTimeout(r, 400));
+        ready.then(() => {
+          window.html2pdf().set({
+            margin: 0,
+            filename: item.id + '.pdf',
+            image: { type: 'jpeg', quality: 0.95 },
+            html2canvas: { scale: 2, useCORS: true, windowWidth: 820 },
+            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+          }).from(target).outputPdf('blob').then(blob => { cleanup(); resolve(blob); }).catch(err => { cleanup(); reject(err); });
+        });
+      };
+      iframe.srcdoc = html;
+    }).catch(reject);
+  });
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Tries to hand the actual PDF file to the device's native share sheet (WhatsApp/Mail/etc pick from there).
+// Falls back to the old text-message link behaviour (fallbackFn) if native file sharing isn't supported,
+// generation fails, or the browser has no navigator.share at all. A user-cancelled share does nothing further.
+async function sharePdfOrFallback(type, i, title, shortText, fallbackFn) {
+  const item = type === 'invoice' ? store.invoices[i] : store.quotes[i];
+  let blob;
+  try {
+    toast('Preparing PDF…');
+    blob = await generateDocPDFBlob(type, item);
+  } catch (err) {
+    console.warn('PDF generation failed, using text-link fallback:', err);
+    fallbackFn();
+    return;
+  }
+  const file = new File([blob], item.id + '.pdf', { type: 'application/pdf' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title, text: shortText });
+      return;
+    } catch (err) {
+      if (err && err.name === 'AbortError') return; // user cancelled the share sheet — not an error
+      console.warn('navigator.share failed, using text-link fallback:', err);
+    }
+  }
+  // No native file sharing available — download the PDF so it can be attached manually, then open the old text-link flow
+  downloadBlob(blob, item.id + '.pdf');
+  toast('PDF downloaded — attach it in the message that opens');
+  fallbackFn();
+}
+
 function shareWhatsApp(type, i) {
   const item = type === 'invoice' ? store.invoices[i] : store.quotes[i];
   const isInv = type === 'invoice';
-  const vatAmt = 0;
   const total = item.amount;
-  const msg = encodeURIComponent(
+  const shortText = `${COMPANY.name} — ${isInv ? 'Tax Invoice' : 'Quotation'} ${item.id} for ${item.client}. Total: R ${total.toLocaleString('en-ZA')}.`;
+  const fallback = () => {
+    const msg = encodeURIComponent(
 `*${COMPANY.name}*
 ${isInv ? '🧾 TAX INVOICE' : '📋 QUOTATION'}: ${item.id}
 
@@ -2781,17 +2863,20 @@ _${(() => {
   const vStr = item.valid ? vd.toLocaleDateString('en-ZA',{day:'numeric',month:'long',year:'numeric'}) : '';
   return COMPANY.quoteTerms.replace('{VALID_DATE}',vStr).replace('{VALID_DAYS}',days>0?days:30);
 })()}_`);
-  window.open('https://wa.me/?text=' + msg, '_blank');
+    window.open('https://wa.me/?text=' + msg, '_blank');
+  };
+  sharePdfOrFallback(type, i, `${isInv ? 'Invoice' : 'Quotation'} ${item.id}`, shortText, fallback);
 }
 
 function shareEmail(type, i) {
   const item = type === 'invoice' ? store.invoices[i] : store.quotes[i];
   const isInv = type === 'invoice';
-  const vatAmt = 0;
   const total = item.amount;
   const client = store.clients.find(c => c.name === item.client);
-  const subject = encodeURIComponent(`${isInv ? 'Invoice' : 'Quotation'} ${item.id} — ${COMPANY.name}`);
-  const body = encodeURIComponent(
+  const shortText = `Please find attached ${isInv ? 'your invoice' : 'our quotation'} ${item.id}. Total: R ${total.toLocaleString('en-ZA')}. Banking: ${COMPANY.bank}.\n\nHeino v Niekerk: 062 274 9921 | Jaco Brits: 072 470 6471`;
+  const fallback = () => {
+    const subject = encodeURIComponent(`${isInv ? 'Invoice' : 'Quotation'} ${item.id} — ${COMPANY.name}`);
+    const body = encodeURIComponent(
 `Dear ${(client && client.invoiceAttn) || item.client},
 
 Please find ${isInv ? 'your invoice' : 'our quotation'} below.
@@ -2821,11 +2906,13 @@ Otto's Renovation & Beautification
 
 Heino v Niekerk: 062 274 9921 | vanniekerkheino52@gmail.com
 Jaco Brits: 072 470 6471 | jaco.brits@hotmail.com`);
-
-  // Prefer billing/accounts email over primary contact email
-  const to = client ? encodeURIComponent(client.invoiceEmail || client.email) : '';
-  window.location.href = `mailto:${to}?subject=${subject}&body=${body}`;
+    const to = client ? encodeURIComponent(client.invoiceEmail || client.email) : '';
+    window.location.href = `mailto:${to}?subject=${subject}&body=${body}`;
+  };
+  sharePdfOrFallback(type, i, `${isInv ? 'Invoice' : 'Quotation'} ${item.id}`, shortText, fallback);
 }
+
+
 
 
 // ══════════════════════════════════════════════════════
