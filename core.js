@@ -549,6 +549,26 @@ Otto's Renovation & Beautification
     <div class="form-actions"><button class="topbar-btn secondary" onclick="closeModalDirect()">CLOSE</button></div>`);
 }
 
+// ── NOTIFY CLIENT — prompted right after a NEW quote/invoice is created for a client who
+// already has portal access. The portal write itself is silent (no alert to the client),
+// so without this the client would never know something new is waiting for them. ──
+function maybePromptNotifyClient(type, i) {
+  const item = type === 'invoice' ? store.invoices[i] : store.quotes[i];
+  if (!item) return;
+  const client = store.clients.find(c => c.name === item.client);
+  if (!client || !client.portalToken) return; // no portal set up for this client — nothing to notify
+  const label = type === 'invoice' ? 'invoice' : 'quote';
+  openModal(`🔔 NOTIFY ${client.name.toUpperCase()}?`, `
+    <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:16px;">
+      ${client.name} has portal access, and this new ${label} (<b style="color:var(--text)">${item.id}</b>) has been added there — but the portal doesn't alert them automatically. Send it now, or they won't know it's there.
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <button onclick="closeModalDirect();shareWhatsApp('${type}',${i})" style="display:flex;align-items:center;justify-content:center;gap:10px;background:#25D366;color:#fff;border:none;padding:13px;font-family:var(--fd);font-size:19px;letter-spacing:1px;cursor:pointer;">📲 SEND VIA WHATSAPP</button>
+      <button onclick="closeModalDirect();shareEmail('${type}',${i})" style="display:flex;align-items:center;justify-content:center;gap:10px;background:var(--blue);color:#fff;border:none;padding:13px;font-family:var(--fd);font-size:19px;letter-spacing:1px;cursor:pointer;">✉ SEND VIA EMAIL</button>
+      <button class="topbar-btn secondary" onclick="closeModalDirect()">SKIP — I'LL SEND LATER</button>
+    </div>`);
+}
+
 function showFormShareModal(clientId, clientName, phone, email, clientType, autoChannel) {
   const formUrl = getFormUrl(clientId);
   if (!formUrl) {
@@ -1892,6 +1912,7 @@ function convertToInvoice(i) {
   save(); store.invoices.push({ id:'INV-2025-00'+(store.invoices.length+1), client:q.client, project:'PRJ-NEW', amount:q.amount, issued:new Date().toISOString().split('T')[0], due:q.valid, status:'sent' });
   store.quotes[i].status='approved';
   save(); syncClientPortal(q.client); toast('Converted to invoice ✓'); navigate('invoices');
+  maybePromptNotifyClient('invoice', store.invoices.length - 1);
 }
 function filterProjects(f,btn) { currentFilter=f; document.querySelectorAll('#page-projects .filter-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); renderProjects(); }
 function filterTable(id,q) { document.getElementById(id).querySelectorAll('tr').forEach(r=>{ r.style.display=r.textContent.toLowerCase().includes(q.toLowerCase())?'':'none'; }); }
@@ -2108,6 +2129,7 @@ function saveNewInvoice() {
   store.invoices.unshift(rec);
   store.activity.unshift({ text:`Invoice ${id} created — ${rec.client} — ${fmt(rec.amount)}`, time:'Just now', type:'green' });
   save(); syncClientPortal(rec.client); closeModalDirect(); renderPage('invoices'); toast(`Invoice ${id} created ✓`);
+  maybePromptNotifyClient('invoice', 0);
 }
 function saveEditInvoice() {
   const i   = editingInvIdx;
@@ -2341,6 +2363,7 @@ function saveNewQuote() {
   closeModalDirect();
   renderPage('quotes');
   toast('Quote ' + id + ' created ✓');
+  maybePromptNotifyClient('quote', 0);
 }
 
 function saveEditQuote() {
