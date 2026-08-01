@@ -255,7 +255,7 @@ function renderVariations() {
     return `
     <div class="card">
       <div class="card-head">
-        <div><div class="card-title">${v.description||v.id}</div><div class="card-id">${v.id} · ${v.project||''}</div></div>
+        <div><div class="card-title">${v.description||v.id}</div><div class="card-id">${v.id} · ${v.project||''}${v.propertyLabel ? ' · 🏠 '+v.propertyLabel : ''}</div></div>
         ${statusBadge(v.status)}
       </div>
       <div class="card-body">
@@ -289,7 +289,7 @@ function renderProjects() {
   el.innerHTML = list.map(p => `
     <div class="card">
       <div class="card-head">
-        <div><div class="card-title">${p.name}</div><div class="card-id">${p.id} · ${p.type||''}</div></div>
+        <div><div class="card-title">${p.name}</div><div class="card-id">${p.id} · ${p.type||''}${p.propertyLabel ? ' · 🏠 '+p.propertyLabel : ''}</div></div>
         ${statusBadge(p.status)}
       </div>
       <div class="card-body">
@@ -373,7 +373,7 @@ function renderInvoices() {
     return `
     <div class="card">
       <div class="card-head">
-        <div><div class="card-title">${inv.id}</div><div class="card-id">Issued ${dt(inv.issued)} · Due ${dt(inv.due)}</div></div>
+        <div><div class="card-title">${inv.id}</div><div class="card-id">Issued ${dt(inv.issued)} · Due ${dt(inv.due)}${inv.propertyLabel ? ' · 🏠 '+inv.propertyLabel : ''}</div></div>
         ${statusBadge(inv.status)}
       </div>
       <div class="card-body">

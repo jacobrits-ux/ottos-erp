@@ -376,6 +376,107 @@ function getFormUrl(clientId) {
   return `${base}/index.html?form=${clientId}&pid=${pid}`;
 }
 
+// Additional-property form link — a UNIQUE token per submission (never reused per client), so sending
+// two property forms to the same client before either is imported can never collide/overwrite each other.
+function getPropertyFormUrl(clientId) {
+  const cfg = JSON.parse(localStorage.getItem('ottos_firebase_config') || 'null') || {};
+  const base = (cfg.netlifyUrl || '').trim().replace(/\/$/, '');
+  const pid  = cfg.projectId || '';
+  if (!base || !pid) return null;
+  const propToken = clientId + '-prop-' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+  return { url: `${base}/index.html?form=${propToken}&pid=${pid}&mode=property`, token: propToken };
+}
+
+function sendPropertyForm(clientId, autoChannel) {
+  const client = store.clients.find(c => c.id === clientId);
+  if (!client) { toast('Client not found'); return; }
+  const formInfo = getPropertyFormUrl(clientId);
+  if (!formInfo) {
+    openModal('🏠 SEND PROPERTY FORM', `
+      <div style="background:rgba(232,160,32,.08);border:1px solid rgba(232,160,32,.25);padding:14px;margin-bottom:14px;">
+        <div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--accent);margin-bottom:6px;">⚠ SETUP REQUIRED FIRST</div>
+        <div style="font-size:13px;color:var(--text2);line-height:1.6;">Your Site URL and Firebase Project ID must be configured before form links can be generated.</div>
+      </div>
+      <div class="form-actions">
+        <button class="topbar-btn" onclick="closeModalDirect();showFirebaseSetup()">⚡ CONFIGURE NOW</button>
+        <button class="topbar-btn secondary" onclick="closeModalDirect()">SKIP FOR NOW</button>
+      </div>`);
+    return;
+  }
+
+  if (db) {
+    db.collection('clientForms').doc(formInfo.token).set({
+      clientId: client.id, clientName: client.name, clientPhone: client.phone||'', clientEmail: client.email||'',
+      clientType: client.type||'', mode: 'property',
+      status: 'pending', createdAt: new Date().toISOString(), sentAt: new Date().toISOString(),
+      _dev: DEVICE_ID
+    }).catch(err => console.warn('Property form record write failed:', err));
+  }
+
+  const waMsg = encodeURIComponent(
+`Dear ${client.name},
+
+To help us plan work at your additional property, please complete this short Site Assessment Form:
+
+🔗 ${formInfo.url}
+
+It only covers the new property's address, access details, and the work required — about 3 minutes.
+
+Kind regards,
+*Heino v Niekerk* — 062 274 9921
+*Jaco Brits* — 072 470 6471
+_Otto's Renovation & Beautification_`);
+
+  const emailSubject = encodeURIComponent(`Additional Property — Site Assessment Form — Otto's Renovation & Beautification`);
+  const emailBody = encodeURIComponent(
+`Dear ${client.name},
+
+To help us plan work at your additional property, please complete this short Site Assessment Form using the link below:
+
+${formInfo.url}
+
+It only covers the new property's address, access details, and the work required, and should take about 3 minutes.
+
+Kind regards,
+
+Heino v Niekerk — 062 274 9921
+vanniekerkheino52@gmail.com
+
+Jaco Brits — 072 470 6471
+jaco.brits@hotmail.com
+
+Otto's Renovation & Beautification
+31 Augrabies Ave, Mooikloof Ridge Estate, Pretoria`);
+
+  openModal('🏠 SEND PROPERTY FORM', `
+    <div style="background:rgba(76,175,125,.06);border:1px solid rgba(76,175,125,.2);padding:12px 14px;margin-bottom:14px;">
+      <div style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--green);text-transform:uppercase;margin-bottom:4px;">Property Form Ready — ${client.name}</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:8px;">This is a shortened form — client details and invoicing are already on file, so only the new site's details are asked for. It will be added as a new property on this client once you review and import it.</div>
+      <div style="background:var(--bg);border:1px solid var(--border);padding:8px 10px;font-family:var(--fm);font-size:10px;color:var(--text2);word-break:break-all;">${formInfo.url}</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px;">
+      <a href="https://wa.me/${(client.phone||'').replace(/\D/g,'')}?text=${waMsg}" target="_blank"
+        style="display:flex;align-items:center;justify-content:center;gap:10px;background:#25D366;color:#fff;text-decoration:none;padding:14px;font-family:var(--fd);font-size:20px;letter-spacing:1px;border-radius:2px;">
+        📲 SEND VIA WHATSAPP
+      </a>
+      <a href="mailto:${client.email||''}?subject=${emailSubject}&body=${emailBody}"
+        style="display:flex;align-items:center;justify-content:center;gap:10px;background:var(--blue);color:#fff;text-decoration:none;padding:14px;font-family:var(--fd);font-size:20px;letter-spacing:1px;border-radius:2px;">
+        ✉ SEND VIA EMAIL
+      </a>
+      <button onclick="navigator.clipboard.writeText('${formInfo.url}').then(()=>toast('Link copied ✓'))" class="topbar-btn secondary" style="padding:12px;font-size:13px;">
+        📋 COPY LINK
+      </button>
+    </div>
+    <div class="form-actions"><button class="topbar-btn secondary" onclick="closeModalDirect()">DONE</button></div>
+  `);
+
+  if (autoChannel === 'wa' && client.phone) {
+    setTimeout(() => window.open(`https://wa.me/${client.phone.replace(/\D/g,'')}?text=${waMsg}`, '_blank'), 400);
+  } else if (autoChannel === 'email' && client.email) {
+    setTimeout(() => { window.location.href = `mailto:${client.email}?subject=${emailSubject}&body=${emailBody}`; }, 400);
+  }
+}
+
 // ══════════════════════════════════════════════════════
 // ── CLIENT PORTAL (read-only client view, token-link access) ──
 // ══════════════════════════════════════════════════════
@@ -405,25 +506,37 @@ function syncClientPortal(clientName) {
   if (!client || !client.portalToken) return; // portal link never generated for this client — nothing to sync
 
   const projects = store.projects.filter(p => p.client === clientName).map(p => ({
-    id: p.id, name: p.name, type: p.type, status: p.status, progress: p.progress, deadline: p.deadline, desc: p.desc || ''
+    id: p.id, name: p.name, type: p.type, status: p.status, progress: p.progress, deadline: p.deadline, desc: p.desc || '',
+    propertyLabel: p.propertyLabel || ''
   }));
   const quotes = store.quotes.filter(q => q.client === clientName).map(q => ({
     id: q.id, desc: q.desc, amount: q.amount, date: q.date, valid: q.valid, status: q.status, version: q.version || 1,
     contingency: q.contingency || 0, contingencyPct: q.contingencyPct || 0,
     lines: (q.lines || []).map(l => ({ desc: l.desc, qty: l.qty, unit: l.unit, lineTotal: l.lineTotal }))
   }));
-  const invoices = store.invoices.filter(i => i.client === clientName && i.type !== 'credit').map(i => ({
-    id: i.id, project: i.project, amount: i.amount, issued: i.issued, due: i.due, status: i.status,
-    lines: (i.lines || []).map(l => ({ desc: l.desc, qty: l.qty, unit: l.unit, lineTotal: l.lineTotal }))
-  }));
+  const invoices = store.invoices.filter(i => i.client === clientName && i.type !== 'credit').map(i => {
+    const linkedProject = store.projects.find(pr => pr.id === i.project);
+    return {
+      id: i.id, project: i.project, amount: i.amount, issued: i.issued, due: i.due, status: i.status,
+      lines: (i.lines || []).map(l => ({ desc: l.desc, qty: l.qty, unit: l.unit, lineTotal: l.lineTotal })),
+      propertyLabel: linkedProject ? (linkedProject.propertyLabel || '') : ''
+    };
+  });
   // Only variations still awaiting the client, or resolved via the portal itself — in-person
   // approvals stay off the portal entirely, nothing for the client to review remotely.
-  const variations = variationOrders.filter(v => v.client === clientName && v.approvalMethod === 'portal').map(v => ({
-    id: v.id, project: v.project, description: v.description, amount: v.amount, status: v.status,
-    createdAt: v.createdAt, lines: (v.lines || []).map(l => ({ desc: l.desc, qty: l.qty, unit: l.unit, lineTotal: l.lineTotal }))
-  }));
+  const variations = variationOrders.filter(v => v.client === clientName && v.approvalMethod === 'portal').map(v => {
+    const linkedProject = store.projects.find(pr => pr.id === v.project);
+    return {
+      id: v.id, project: v.project, description: v.description, amount: v.amount, status: v.status,
+      createdAt: v.createdAt, lines: (v.lines || []).map(l => ({ desc: l.desc, qty: l.qty, unit: l.unit, lineTotal: l.lineTotal })),
+      propertyLabel: linkedProject ? (linkedProject.propertyLabel || '') : ''
+    };
+  });
+  // Summary of all this client's properties — lets the portal show a properties overview even
+  // before any project/quote/invoice references one specifically.
+  const properties = getClientProperties(client).map(p => ({ id: p.id, siteName: p.siteName || '', siteAddress: p.siteAddress || '' }));
 
-  const payload = { clientName, clientType: client.type || '', projects, quotes, invoices, variations, generatedAt: new Date().toISOString() };
+  const payload = { clientName, clientType: client.type || '', projects, quotes, invoices, variations, properties, generatedAt: new Date().toISOString() };
   db.collection('clientPortal').doc(client.portalToken)
     .set({ data: JSON.stringify(payload), _dev: DEVICE_ID }, { merge: true })
     .catch(err => console.warn('Portal sync failed:', err));
@@ -689,10 +802,11 @@ function renderPendingForms() {
     const submittedAt = f.submittedAt ? new Date(f.submittedAt).toLocaleString('en-ZA') : 'Unknown';
     return `<div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;${isImported?'opacity:.5':''}">
       <div style="flex:1;">
-        <div style="font-weight:600;font-size:13px;">${f.clientName || f.declName || 'Unknown Client'}</div>
+        <div style="font-weight:600;font-size:13px;">${f.clientName || f.declName || 'Unknown Client'} ${f.mode === 'property' ? '<span class="badge badge-blue" style="margin-left:6px;">🏠 PROPERTY</span>' : ''}</div>
         <div style="font-family:var(--fm);font-size:10px;color:var(--text3);margin-top:2px;">
           ${f.mobile||f.clientPhone||''} · ${f.email||f.clientEmail||''} · Submitted ${submittedAt}
         </div>
+        ${f.siteName || f.siteAddr1 ? `<div style="font-size:11px;color:var(--text2);margin-top:3px;">Property: ${[f.siteName, f.siteAddr1].filter(Boolean).join(' — ')}</div>` : ''}
         ${f.serviceRequired ? `<div style="font-size:11px;color:var(--text2);margin-top:3px;max-width:500px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Service: ${f.serviceRequired}</div>` : ''}
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0;">
@@ -762,6 +876,42 @@ function fSection(title, rows) {
 function importFormSubmission(idx) {
   const f = pendingFormSubmissions[idx];
   if (!f) return;
+
+  // ── Additional-property submission: append to the client's properties[] array.
+  // Client-level fields (name, invoicing, etc.) are never touched by this path. ──
+  if (f.mode === 'property') {
+    const clientIdx = store.clients.findIndex(c => c.id == f.clientId);
+    if (clientIdx === -1) { alert('Could not find the client this property belongs to — the client record may have been deleted.'); return; }
+    const c = store.clients[clientIdx];
+    if (!Array.isArray(c.properties)) c.properties = [];
+    const newProperty = {
+      id: 'PROP-' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+      siteName: f.siteName || '',
+      siteAddress: [f.siteAddr1, f.siteAddr2].filter(Boolean).join(', '),
+      gpsCoords: f.gpsCoords || '',
+      accessInstructions: f.accessInstructions || '',
+      securityRequirements: f.securityRequirements || '',
+      contact1Name: f.contact1Name || '', contact1Pos: f.contact1Pos || '', contact1Phone: f.contact1Phone || '',
+      contact1Email: f.contact1Email || '', contact1Avail: f.contact1Avail || '',
+      contact2Name: f.contact2Name || '', contact2Pos: f.contact2Pos || '', contact2Phone: f.contact2Phone || '',
+      contact2Email: f.contact2Email || '', contact2Avail: f.contact2Avail || '',
+      extraContacts: f.extraContacts || '',
+      serviceRequired: f.serviceRequired || '', prefDates: f.prefDates || '', prefHours: f.prefHours || '', specialReqs: f.specialReqs || '',
+      emName: f.emName || '', emPhone: f.emPhone || '', emRel: f.emRel || '',
+      formSubmittedAt: f.submittedAt || '',
+      formData: f,
+    };
+    c.properties.push(newProperty);
+    save();
+    store.activity.unshift({ text: `New property added for ${c.name}: ${newProperty.siteName || newProperty.siteAddress || 'Untitled property'}`, time: 'Just now', type: 'green' });
+    save();
+    if (db) db.collection('clientForms').doc(f.id || f.clientId).update({ _imported: true, importedAt: new Date().toISOString() }).catch(() => {});
+    pendingFormSubmissions[idx]._imported = true;
+    updateFormBadge();
+    renderClients();
+    toast(`Property added to ${c.name} ✓`);
+    return;
+  }
 
   // Find matching client by clientId or by name
   let clientIdx = store.clients.findIndex(c => c.id == f.clientId);
@@ -1952,7 +2102,8 @@ function closeModalDirect() { document.getElementById('modal-overlay').classList
 function showNewProject() {
   openModal('NEW PROJECT', `<div class="form-grid">
     <div class="form-group full"><label>Project Name</label><input type="text" id="f-name" placeholder="e.g. Sandton Kitchen Remodel"></div>
-    <div class="form-group"><label>Client</label><select id="f-client">${store.clients.map(c=>`<option>${c.name}</option>`).join('')}<option>New Client</option></select></div>
+    <div class="form-group"><label>Client</label><select id="f-client" onchange="populatePropertySelect(this.value,'f-property')">${store.clients.map(c=>`<option>${c.name}</option>`).join('')}<option>New Client</option></select></div>
+    <div class="form-group"><label>Property <span style="color:var(--text3);font-weight:400;text-transform:none;font-family:var(--fb);font-size:10px;">optional</span></label><select id="f-property"></select></div>
     <div class="form-group"><label>Type</label><select id="f-type"><option>Renovation</option><option>Bathroom</option><option>Kitchen</option><option>Outdoor</option><option>Commercial</option><option>Roofing</option><option>Other</option></select></div>
     <div class="form-group"><label>Value (R)</label><input type="number" id="f-value" placeholder="0"></div>
     <div class="form-group"><label>Status</label><select id="f-status"><option value="active">Active</option><option value="on-hold">On Hold</option></select></div>
@@ -1960,18 +2111,35 @@ function showNewProject() {
     <div class="form-group"><label>Deadline</label><input type="date" id="f-deadline"></div>
     <div class="form-group full"><label>Description</label><textarea id="f-desc" placeholder="Scope of work..."></textarea></div>
   </div><div class="form-actions"><button class="topbar-btn" onclick="saveNewProject()">SAVE PROJECT</button><button class="topbar-btn secondary" onclick="closeModalDirect()">CANCEL</button></div>`);
+  populatePropertySelect(store.clients[0] ? store.clients[0].name : '', 'f-property');
 }
+
+// Populates a property <select> from the given client's properties[] (or their legacy single site, if any).
+// Reusable across New/Edit Project, Invoice, and Quote modals wherever a property choice is relevant.
+function populatePropertySelect(clientName, selectId, selectedPropertyId) {
+  const el = document.getElementById(selectId);
+  if (!el) return;
+  const client = store.clients.find(c => c.name === clientName);
+  const props = getClientProperties(client);
+  el.innerHTML = '<option value="">— No specific property —</option>' +
+    props.map(p => `<option value="${p.id}" ${selectedPropertyId===p.id?'selected':''}>${p.siteName || p.siteAddress || 'Untitled property'}</option>`).join('');
+}
+
 function saveNewProject() {
   const name=document.getElementById('f-name').value; if(!name){alert('Name required');return;}
   const clientName = document.getElementById('f-client').value;
-  store.projects.unshift({ id:'PRJ-'+String(store.projects.length+1).padStart(3,'0'), name, client:clientName, value:+document.getElementById('f-value').value||0, start:document.getElementById('f-start').value, deadline:document.getElementById('f-deadline').value, progress:0, status:document.getElementById('f-status').value, type:document.getElementById('f-type').value, desc:document.getElementById('f-desc').value });
+  const propertyId = document.getElementById('f-property')?.value || '';
+  const propObj = propertyId ? getClientProperties(store.clients.find(c=>c.name===clientName)).find(p=>p.id===propertyId) : null;
+  const propertyLabel = propObj ? (propObj.siteName || propObj.siteAddress || '') : '';
+  store.projects.unshift({ id:'PRJ-'+String(store.projects.length+1).padStart(3,'0'), name, client:clientName, propertyId, propertyLabel, value:+document.getElementById('f-value').value||0, start:document.getElementById('f-start').value, deadline:document.getElementById('f-deadline').value, progress:0, status:document.getElementById('f-status').value, type:document.getElementById('f-type').value, desc:document.getElementById('f-desc').value });
   save(); syncClientPortal(clientName); closeModalDirect(); renderPage(currentPage); toast('Project created ✓');
 }
 function editProject(i) {
   const p=store.projects[i];
   openModal('EDIT PROJECT', `<div class="form-grid">
     <div class="form-group full"><label>Name</label><input type="text" id="f-name" value="${p.name}"></div>
-    <div class="form-group"><label>Client</label><input type="text" id="f-client" value="${p.client}"></div>
+    <div class="form-group"><label>Client</label><input type="text" id="f-client" value="${p.client}" oninput="populatePropertySelect(this.value,'f-property')"></div>
+    <div class="form-group"><label>Property <span style="color:var(--text3);font-weight:400;text-transform:none;font-family:var(--fb);font-size:10px;">optional</span></label><select id="f-property"></select></div>
     <div class="form-group"><label>Value (R)</label><input type="number" id="f-value" value="${p.value}"></div>
     <div class="form-group"><label>Progress (%)</label><input type="number" id="f-progress" min="0" max="100" value="${p.progress}"></div>
     <div class="form-group"><label>Status</label><select id="f-status"><option value="active" ${p.status==='active'?'selected':''}>Active</option><option value="completed" ${p.status==='completed'?'selected':''}>Completed</option><option value="on-hold" ${p.status==='on-hold'?'selected':''}>On Hold</option></select></div>
@@ -1979,9 +2147,14 @@ function editProject(i) {
     <div class="form-group"><label>Deadline</label><input type="date" id="f-deadline" value="${p.deadline}"></div>
     <div class="form-group full"><label>Description</label><textarea id="f-desc">${p.desc||''}</textarea></div>
   </div><div class="form-actions"><button class="topbar-btn" onclick="saveEditProject(${i})">SAVE</button><button class="topbar-btn secondary" onclick="closeModalDirect()">CANCEL</button></div>`);
+  populatePropertySelect(p.client, 'f-property', p.propertyId || '');
 }
 function saveEditProject(i) {
-  store.projects[i]={...store.projects[i], name:document.getElementById('f-name').value, client:document.getElementById('f-client').value, value:+document.getElementById('f-value').value, progress:+document.getElementById('f-progress').value, status:document.getElementById('f-status').value, start:document.getElementById('f-start').value, deadline:document.getElementById('f-deadline').value, desc:document.getElementById('f-desc').value};
+  const clientName = document.getElementById('f-client').value;
+  const propertyId = document.getElementById('f-property')?.value || '';
+  const propObj = propertyId ? getClientProperties(store.clients.find(c=>c.name===clientName)).find(p=>p.id===propertyId) : null;
+  const propertyLabel = propObj ? (propObj.siteName || propObj.siteAddress || '') : '';
+  store.projects[i]={...store.projects[i], name:document.getElementById('f-name').value, client:clientName, propertyId, propertyLabel, value:+document.getElementById('f-value').value, progress:+document.getElementById('f-progress').value, status:document.getElementById('f-status').value, start:document.getElementById('f-start').value, deadline:document.getElementById('f-deadline').value, desc:document.getElementById('f-desc').value};
   save(); syncClientPortal(store.projects[i].client); closeModalDirect(); renderPage(currentPage); toast('Project updated ✓');
 }
 function showNewJob() {
@@ -2401,13 +2574,32 @@ function saveNewExpense() {
 }
 function showNewClient() {
   openModal('NEW CLIENT', `
-    <div class="form-grid">
+    <div style="display:flex;gap:0;margin-bottom:14px;border:1px solid var(--border);">
+      <button id="ncm-new-btn" onclick="ncmSetMode('new')" style="flex:1;background:var(--surface2);border:none;color:var(--accent);padding:10px 6px;font-family:var(--fm);font-size:11px;letter-spacing:1px;cursor:pointer;">🆕 NEW CLIENT</button>
+      <button id="ncm-prop-btn" onclick="ncmSetMode('property')" style="flex:1;background:var(--surface);border:none;border-left:1px solid var(--border);color:var(--text3);padding:10px 6px;font-family:var(--fm);font-size:11px;letter-spacing:1px;cursor:pointer;">🏠 ADDITIONAL PROPERTY</button>
+    </div>
+
+    <div id="ncm-new-fields" class="form-grid">
       <div class="form-group full"><label>Name / Company <span style="color:var(--red)">*</span></label><input type="text" id="f-name" placeholder="Full name or company name" oninput="cfCheckFormBtn()"></div>
       <div class="form-group"><label>Client Type</label><select id="f-type"><option>Residential</option><option>Commercial</option></select></div>
       <div class="form-group"><label>Phone</label><input type="tel" id="f-phone" placeholder="082 000 0000" oninput="cfCheckFormBtn()"></div>
       <div class="form-group full"><label>Email</label><input type="email" id="f-email" placeholder="email@domain.com" oninput="cfCheckFormBtn()"></div>
     </div>
-    <div style="background:rgba(212,168,67,.06);border:1px solid rgba(212,168,67,.25);padding:11px 13px;margin-top:12px;border-radius:2px;">
+
+    <div id="ncm-prop-fields" style="display:none;">
+      <div class="form-group full">
+        <label>Select Existing Client <span style="color:var(--red)">*</span></label>
+        <select id="f-existing-client" onchange="ncmCheckPropertyBtn()">
+          <option value="">— Choose Client —</option>
+          ${store.clients.map(c => `<option value="${c.id}">${c.name}${c.phone ? ' · '+c.phone : ''}</option>`).join('')}
+        </select>
+      </div>
+      <div style="background:rgba(74,159,212,.06);border:1px solid rgba(74,159,212,.2);padding:10px 12px;margin-top:10px;font-size:12px;color:var(--text2);line-height:1.6;">
+        Sends a short form asking only for the new property's site details — their contact and invoicing info is already on file, so those sections are skipped.
+      </div>
+    </div>
+
+    <div id="ncm-new-send" style="background:rgba(212,168,67,.06);border:1px solid rgba(212,168,67,.25);padding:11px 13px;margin-top:12px;border-radius:2px;">
       <div style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--accent);text-transform:uppercase;margin-bottom:6px;">📋 Client Intake Form</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:10px;">Enter a phone number or email address above to send the Client Information & Site Assessment Form automatically after saving.</div>
       <div style="display:flex;gap:8px;">
@@ -2419,11 +2611,55 @@ function showNewClient() {
           disabled>✉ SAVE & SEND EMAIL</button>
       </div>
     </div>
+
+    <div id="ncm-prop-send" style="display:none;background:rgba(212,168,67,.06);border:1px solid rgba(212,168,67,.25);padding:11px 13px;margin-top:12px;border-radius:2px;">
+      <div style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--accent);text-transform:uppercase;margin-bottom:6px;">🏠 Send Property Form</div>
+      <div style="display:flex;gap:8px;">
+        <button id="ncm-prop-wa-btn" onclick="ncmSendProperty('wa')"
+          style="flex:1;background:#25D366;color:#fff;border:none;padding:10px 12px;font-family:var(--fd);font-size:15px;letter-spacing:1px;cursor:not-allowed;opacity:.35;border-radius:2px;transition:all .2s;"
+          disabled>📲 SEND VIA WA</button>
+        <button id="ncm-prop-em-btn" onclick="ncmSendProperty('email')"
+          style="flex:1;background:var(--blue);color:#fff;border:none;padding:10px 12px;font-family:var(--fd);font-size:15px;letter-spacing:1px;cursor:not-allowed;opacity:.35;border-radius:2px;transition:all .2s;"
+          disabled>✉ SEND VIA EMAIL</button>
+      </div>
+    </div>
+
     <div class="form-actions" style="margin-top:10px;">
       <button class="topbar-btn secondary" onclick="saveNewClient(false)">SAVE ONLY</button>
       <button class="topbar-btn secondary" onclick="closeModalDirect()">CANCEL</button>
     </div>
   `);
+}
+
+function ncmSetMode(mode) {
+  const isNew = mode === 'new';
+  document.getElementById('ncm-new-fields').style.display  = isNew ? '' : 'none';
+  document.getElementById('ncm-prop-fields').style.display = isNew ? 'none' : '';
+  document.getElementById('ncm-new-send').style.display    = isNew ? '' : 'none';
+  document.getElementById('ncm-prop-send').style.display   = isNew ? 'none' : '';
+  const newBtn = document.getElementById('ncm-new-btn'), propBtn = document.getElementById('ncm-prop-btn');
+  newBtn.style.background  = isNew ? 'var(--surface2)' : 'var(--surface)';
+  newBtn.style.color       = isNew ? 'var(--accent)' : 'var(--text3)';
+  propBtn.style.background = isNew ? 'var(--surface)' : 'var(--surface2)';
+  propBtn.style.color      = isNew ? 'var(--text3)' : 'var(--accent)';
+  const title = document.getElementById('modal-title');
+  if (title) title.textContent = isNew ? 'NEW CLIENT' : 'ADDITIONAL PROPERTY';
+  if (!isNew) ncmCheckPropertyBtn();
+}
+
+function ncmCheckPropertyBtn() {
+  const has = !!document.getElementById('f-existing-client')?.value;
+  ['ncm-prop-wa-btn','ncm-prop-em-btn'].forEach(id => {
+    const b = document.getElementById(id);
+    if (b) { b.disabled = !has; b.style.opacity = has ? '1' : '.35'; b.style.cursor = has ? 'pointer' : 'not-allowed'; }
+  });
+}
+
+function ncmSendProperty(channel) {
+  const clientId = document.getElementById('f-existing-client')?.value;
+  if (!clientId) { alert('Please select a client'); return; }
+  closeModalDirect();
+  sendPropertyForm(clientId, channel);
 }
 
 function cfCheckFormBtn() {
@@ -2942,12 +3178,27 @@ Jaco Brits: 072 470 6471 | jaco.brits@hotmail.com`);
 // ── EMBEDDED CLIENT FORM ENGINE ──
 // ══════════════════════════════════════════════════════
 const CF_SECTIONS = ['Client Details','Site Details','On-Site Contacts','Work Requirements','Invoicing Details','Emergency Contact','Declaration'];
-let cfCurrent  = 1;
+const CF_SECTION_ORDER_NEW      = [1,2,3,4,5,6,7];
+const CF_SECTION_ORDER_PROPERTY = [2,3,4,6,7]; // Client Details + Invoicing skipped — already on file for an existing client
+let cfSectionOrder = CF_SECTION_ORDER_NEW;
+let cfMode     = 'new'; // 'new' | 'property'
+let cfCurrent  = 1; // position within cfSectionOrder (NOT the raw section number)
 let cfToken    = '';
 let cfPid      = '';
 let cfInitData = {};
 let cfSaveTimer = null;
 let cfSubmitted = false; // once true, autosave must never write over the submitted status
+
+// Multi-property clients: normalizes a client's properties, falling back to legacy flat
+// siteAddress/siteName fields for client records created before this feature existed.
+function getClientProperties(client) {
+  if (!client) return [];
+  if (Array.isArray(client.properties) && client.properties.length) return client.properties;
+  if (client.siteAddress || client.siteName) {
+    return [{ id: 'legacy', siteName: client.siteName || '', siteAddress: client.siteAddress || '', gpsCoords: client.gpsCoords || '', accessInstructions: client.accessInstructions || '' }];
+  }
+  return [];
+}
 
 function cfFsBase() { return `https://firestore.googleapis.com/v1/projects/${cfPid}/databases/(default)/documents`; }
 
@@ -2984,8 +3235,10 @@ async function cfWriteFS(token, data) {
   return r.ok;
 }
 
-async function cfInitMode(token, pid) {
+async function cfInitMode(token, pid, mode) {
   cfToken = token; cfPid = pid;
+  cfMode = mode === 'property' ? 'property' : 'new';
+  cfSectionOrder = cfMode === 'property' ? CF_SECTION_ORDER_PROPERTY : CF_SECTION_ORDER_NEW;
   document.getElementById('cf-overlay').classList.add('active');
   document.querySelector('.topbar')?.style && (document.querySelector('.topbar').style.display = 'none');
   document.querySelector('.shell')?.style  && (document.querySelector('.shell').style.display  = 'none');
@@ -2995,12 +3248,17 @@ async function cfInitMode(token, pid) {
     if (!data) { cfScreen('invalid'); return; }
     if (data.status === 'submitted') { cfScreen('done'); return; }
     cfInitData = data;
-    cfSet('cf-clientName', data.clientName  || '');
-    cfSet('cf-mobile',     data.clientPhone || '');
-    cfSet('cf-email',      data.clientEmail || '');
+    if (cfMode === 'property') {
+      const brand = document.querySelector('.cf-brand');
+      if (brand) brand.innerHTML = `Otto's Renovation & Beautification<span>Additional Property — Site Assessment${data.clientName ? ' for ' + data.clientName : ''}</span>`;
+    } else {
+      cfSet('cf-clientName', data.clientName  || '');
+      cfSet('cf-mobile',     data.clientPhone || '');
+      cfSet('cf-email',      data.clientEmail || '');
+      if (data.clientType) cfSetType(data.clientType);
+    }
     cfSet('cf-declDate',   new Date().toISOString().split('T')[0]);
     cfSet('cf-declRef',    token);
-    if (data.clientType) cfSetType(data.clientType);
     document.getElementById('cf-scr-loading').classList.remove('active');
     document.getElementById('cf-hdr').style.display  = '';
     document.getElementById('cf-body').style.display = '';
@@ -3017,28 +3275,30 @@ function cfScreen(name) {
 }
 
 function cfBuildSteps() {
-  document.getElementById('cf-steps-bar').innerHTML = CF_SECTIONS.map((_,i) =>
+  document.getElementById('cf-steps-bar').innerHTML = cfSectionOrder.map((_,i) =>
     `<div class="cf-step" id="cf-step-${i+1}"></div>`).join('');
 }
 
-function cfGoTo(n) {
+function cfGoTo(pos) {
+  const sectionNum = cfSectionOrder[pos-1];
+  if (!sectionNum) return;
   document.querySelectorAll('.cf-card').forEach(c => c.classList.remove('active'));
-  const card = document.getElementById('cf-s' + n);
+  const card = document.getElementById('cf-s' + sectionNum);
   if (card) { card.classList.add('active'); window.scrollTo({ top: 0, behavior: 'smooth' }); }
-  cfCurrent = n;
-  CF_SECTIONS.forEach((_,i) => {
+  cfCurrent = pos;
+  cfSectionOrder.forEach((_,i) => {
     const el = document.getElementById('cf-step-' + (i+1));
-    if (el) el.className = 'cf-step' + (i+1 < n ? ' done' : i+1 === n ? ' now' : '');
+    if (el) el.className = 'cf-step' + (i+1 < pos ? ' done' : i+1 === pos ? ' now' : '');
   });
-  document.getElementById('cf-sec-cur').textContent  = n;
-  document.getElementById('cf-sec-name').textContent = CF_SECTIONS[n-1] || '';
-  document.getElementById('cf-nav-lbl').textContent  = `${n} / 7`;
-  document.getElementById('cf-btn-back').style.display   = n === 1 ? 'none' : '';
-  document.getElementById('cf-btn-next').style.display   = n === 7 ? 'none' : '';
-  document.getElementById('cf-btn-submit').style.display = n === 7 ? ''     : 'none';
+  document.getElementById('cf-sec-cur').textContent  = pos;
+  document.getElementById('cf-sec-name').textContent = CF_SECTIONS[sectionNum-1] || '';
+  document.getElementById('cf-nav-lbl').textContent  = `${pos} / ${cfSectionOrder.length}`;
+  document.getElementById('cf-btn-back').style.display   = pos === 1 ? 'none' : '';
+  document.getElementById('cf-btn-next').style.display   = pos === cfSectionOrder.length ? 'none' : '';
+  document.getElementById('cf-btn-submit').style.display = pos === cfSectionOrder.length ? ''     : 'none';
 }
 
-function cfNext() { if (cfValidate(cfCurrent)) cfGoTo(Math.min(7, cfCurrent + 1)); }
+function cfNext() { if (cfValidate(cfSectionOrder[cfCurrent-1])) cfGoTo(Math.min(cfSectionOrder.length, cfCurrent + 1)); }
 function cfPrev() { cfGoTo(Math.max(1, cfCurrent - 1)); }
 
 function cfValidate(sec) {
@@ -3091,7 +3351,7 @@ async function cfAutoSave() {
 
 function cfCollect() {
   const type = document.querySelector('input[name="cf-type"]:checked')?.value || '';
-  return {
+  const data = {
     clientType:type,
     clientName:cfVal('cf-clientName'), regNumber:cfVal('cf-regNumber'), vatNumber:cfVal('cf-vatNumber'),
     contactPerson:cfVal('cf-contactPerson'), contactTitle:cfVal('cf-contactTitle'),
@@ -3113,6 +3373,15 @@ function cfCollect() {
     emName:cfVal('cf-emName'), emPhone:cfVal('cf-emPhone'), emRel:cfVal('cf-emRel'),
     declName:cfVal('cf-declName'), declDate:cfVal('cf-declDate'),
   };
+  if (cfMode === 'property') {
+    // Client identity + invoicing already exist on the client record for property-mode submissions.
+    // Those sections are hidden and never filled in — must not let their blank values overwrite the real ones.
+    ['clientType','clientName','regNumber','vatNumber','contactPerson','contactTitle',
+     'mobile','altPhone','email','physAddr1','physAddr2','postAddr1','postAddr2',
+     'invoiceTo','invoiceAttn','invoiceEmail','accContact','accPhone','poNumber','costCentre','invVat',
+     'billAddr1','billAddr2','invExtra'].forEach(k => delete data[k]);
+  }
+  return data;
 }
 
 async function cfSubmit() {
@@ -3121,10 +3390,10 @@ async function cfSubmit() {
   const btn = document.getElementById('cf-btn-submit');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Submitting…'; }
   try {
-    const ok = await cfWriteFS(cfToken, { ...cfInitData, ...cfCollect(), status:'submitted', submittedAt: new Date().toISOString() });
+    const ok = await cfWriteFS(cfToken, { ...cfInitData, ...cfCollect(), status:'submitted', submittedAt: new Date().toISOString(), mode: cfMode });
     if (!ok) throw new Error('Write failed');
     cfSubmitted = true;
-    const name = cfVal('cf-declName') || cfVal('cf-clientName') || '';
+    const name = cfVal('cf-declName') || cfInitData.clientName || cfVal('cf-clientName') || '';
     const el = document.getElementById('cf-success-name'); if (el) el.textContent = name ? name + ',' : '';
     cfScreen('success');
   } catch {
@@ -4332,10 +4601,11 @@ function resetToDefault() {
 // ── INIT ──
 document.getElementById('date-display').textContent = new Date().toLocaleDateString('en-ZA',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
 
-// Check if opened as a client form link (?form=CLT-xxx&pid=project-id)
+// Check if opened as a client form link (?form=CLT-xxx&pid=project-id&mode=property)
 const _urlParams       = new URLSearchParams(location.search);
 const _formToken       = _urlParams.get('form');
 const _formPid         = _urlParams.get('pid');
+const _formMode        = _urlParams.get('mode');
 
 if (_formToken && _formPid) {
   // Client form mode — hide ERP, show embedded form overlay
@@ -4343,7 +4613,7 @@ if (_formToken && _formPid) {
   document.querySelector('.shell')      && (document.querySelector('.shell').style.display      = 'none');
   document.querySelector('.bottom-nav') && (document.querySelector('.bottom-nav').style.display = 'none');
   document.getElementById('cf-overlay').classList.add('active');
-  cfInitMode(_formToken, _formPid);
+  cfInitMode(_formToken, _formPid, _formMode);
 } else {
   // Normal ERP mode
   renderDashboard();
