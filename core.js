@@ -3029,7 +3029,7 @@ function loadHtml2Pdf() {
 // Renders the same buildDocHTML() output into a hidden iframe (so styles/layout match the
 // print preview exactly) and converts it to a real PDF Blob via html2pdf.js.
 function generateDocPDFBlob(type, item) {
-  return new Promise((resolve, reject) => {
+  const attempt = new Promise((resolve, reject) => {
     loadHtml2Pdf().then(() => {
       let html = buildDocHTML(type, item);
       html = html.replace(/<div class="print-toolbar no-print">[\s\S]*?<\/div>\s*/, '');
@@ -3054,6 +3054,8 @@ function generateDocPDFBlob(type, item) {
       iframe.srcdoc = html;
     }).catch(reject);
   });
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('PDF generation timed out after 20s')), 20000));
+  return Promise.race([attempt, timeout]);
 }
 
 function downloadBlob(blob, filename) {
@@ -3073,17 +3075,20 @@ async function sharePdfOrFallback(type, i, title, shortText, fallbackFn) {
     toast('Preparing PDF…');
     blob = await generateDocPDFBlob(type, item);
   } catch (err) {
+    alert('DEBUG PDF generation failed:\n' + (err && err.message ? err.message : String(err)));
     console.warn('PDF generation failed, using text-link fallback:', err);
     fallbackFn();
     return;
   }
   const file = new File([blob], item.id + '.pdf', { type: 'application/pdf' });
+  alert('DEBUG PDF generated OK, size=' + blob.size + ' bytes. canShare files support: ' + (navigator.canShare ? navigator.canShare({ files: [file] }) : 'navigator.canShare not available'));
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
       await navigator.share({ files: [file], title, text: shortText });
       return;
     } catch (err) {
       if (err && err.name === 'AbortError') return; // user cancelled the share sheet — not an error
+      alert('DEBUG navigator.share failed:\n' + (err && err.message ? err.message : String(err)));
       console.warn('navigator.share failed, using text-link fallback:', err);
     }
   }
