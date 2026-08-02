@@ -3075,24 +3075,40 @@ async function sharePdfOrFallback(type, i, title, shortText, fallbackFn) {
     toast('Preparing PDF…');
     blob = await generateDocPDFBlob(type, item);
   } catch (err) {
-    alert('DEBUG PDF generation failed:\n' + (err && err.message ? err.message : String(err)));
     console.warn('PDF generation failed, using text-link fallback:', err);
     fallbackFn();
     return;
   }
   const file = new File([blob], item.id + '.pdf', { type: 'application/pdf' });
-  alert('DEBUG PDF generated OK, size=' + blob.size + ' bytes. canShare files support: ' + (navigator.canShare ? navigator.canShare({ files: [file] }) : 'navigator.canShare not available'));
+
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try {
-      await navigator.share({ files: [file], title, text: shortText });
-      return;
-    } catch (err) {
-      if (err && err.name === 'AbortError') return; // user cancelled the share sheet — not an error
-      alert('DEBUG navigator.share failed:\n' + (err && err.message ? err.message : String(err)));
-      console.warn('navigator.share failed, using text-link fallback:', err);
-    }
+    // navigator.share() requires a FRESH user gesture. PDF generation is async (CDN load, iframe
+    // render, html2canvas capture) — by the time it finishes, the original tap's gesture has expired
+    // and Chrome rejects the share call outright. Fix: surface a one-tap "PDF Ready" confirm and fire
+    // navigator.share() from THAT tap's own click handler instead, with zero async work in between.
+    openModal('📄 PDF READY', `
+      <div style="text-align:center;padding:6px 0 18px;">
+        <div style="font-size:40px;margin-bottom:14px;">📄</div>
+        <div style="font-size:13px;color:var(--text2);margin-bottom:20px;">Your ${title} PDF is ready to send.</div>
+        <button id="pdf-ready-share-btn" style="width:100%;background:var(--accent);color:var(--bg);border:none;padding:14px;font-family:var(--fd);font-size:20px;letter-spacing:1px;cursor:pointer;">📤 TAP TO SHARE</button>
+      </div>`);
+    const btn = document.getElementById('pdf-ready-share-btn');
+    if (btn) btn.onclick = async () => {
+      closeModalDirect();
+      try {
+        await navigator.share({ files: [file], title, text: shortText });
+      } catch (err) {
+        if (err && err.name === 'AbortError') return; // user cancelled the share sheet — not an error
+        console.warn('navigator.share failed, using text-link fallback:', err);
+        downloadBlob(blob, item.id + '.pdf');
+        toast('PDF downloaded — attach it in the message that opens');
+        fallbackFn();
+      }
+    };
+    return;
   }
-  // No native file sharing available — download the PDF so it can be attached manually, then open the old text-link flow
+
+  // No native file sharing available at all — download the PDF so it can be attached manually
   downloadBlob(blob, item.id + '.pdf');
   toast('PDF downloaded — attach it in the message that opens');
   fallbackFn();
