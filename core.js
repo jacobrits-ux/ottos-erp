@@ -3028,31 +3028,46 @@ function loadHtml2Pdf() {
 
 // Renders the same buildDocHTML() output into a hidden iframe (so styles/layout match the
 // print preview exactly) and converts it to a real PDF Blob via html2pdf.js.
+// IMPORTANT: html2pdf/html2canvas is loaded and RUN INSIDE the iframe's own document, not from
+// the parent reaching in — capturing a foreign document's content from the parent's html2canvas
+// instance renders blank (a known cross-document limitation), since html2canvas measures/renders
+// against whichever window it's actually running in.
 function generateDocPDFBlob(type, item) {
   const attempt = new Promise((resolve, reject) => {
-    loadHtml2Pdf().then(() => {
-      let html = buildDocHTML(type, item);
-      html = html.replace(/<div class="print-toolbar no-print">[\s\S]*?<\/div>\s*/, '');
-      const iframe = document.createElement('iframe');
-      iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:820px;height:1131px;border:0;';
-      document.body.appendChild(iframe);
-      const cleanup = () => { if (iframe.parentNode) document.body.removeChild(iframe); };
-      iframe.onload = () => {
-        const doc = iframe.contentDocument;
+    let html = buildDocHTML(type, item);
+    html = html.replace(/<div class="print-toolbar no-print">[\s\S]*?(?=<div class="page">)/, '');
+    const libTag = '<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"><\/script>';
+    html = html.includes('</body>') ? html.replace('</body>', libTag + '</body>') : html + libTag;
+
+    const iframe = document.createElement('iframe');
+    iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:820px;height:1131px;border:0;';
+    document.body.appendChild(iframe);
+    const cleanup = () => { if (iframe.parentNode) document.body.removeChild(iframe); };
+
+    iframe.onload = () => {
+      const win = iframe.contentWindow;
+      const doc = iframe.contentDocument;
+      const waitForLib = new Promise((res, rej) => {
+        let tries = 0;
+        const iv = setInterval(() => {
+          tries++;
+          if (win.html2pdf) { clearInterval(iv); res(); }
+          else if (tries > 100) { clearInterval(iv); rej(new Error('PDF library failed to load inside iframe')); } // ~5s
+        }, 50);
+      });
+      waitForLib.then(() => {
         const target = doc.querySelector('.page') || doc.body;
         const ready = doc.fonts && doc.fonts.ready ? doc.fonts.ready : new Promise(r => setTimeout(r, 400));
-        ready.then(() => {
-          window.html2pdf().set({
-            margin: 0,
-            filename: item.id + '.pdf',
-            image: { type: 'jpeg', quality: 0.95 },
-            html2canvas: { scale: 2, useCORS: true, windowWidth: 820 },
-            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-          }).from(target).outputPdf('blob').then(blob => { cleanup(); resolve(blob); }).catch(err => { cleanup(); reject(err); });
-        });
-      };
-      iframe.srcdoc = html;
-    }).catch(reject);
+        return ready.then(() => win.html2pdf().set({
+          margin: 0,
+          filename: item.id + '.pdf',
+          image: { type: 'jpeg', quality: 0.95 },
+          html2canvas: { scale: 2, useCORS: true, windowWidth: 820 },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+        }).from(target).outputPdf('blob'));
+      }).then(blob => { cleanup(); resolve(blob); }).catch(err => { cleanup(); reject(err); });
+    };
+    iframe.srcdoc = html;
   });
   const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('PDF generation timed out after 20s')), 20000));
   return Promise.race([attempt, timeout]);
