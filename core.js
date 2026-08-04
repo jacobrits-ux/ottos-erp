@@ -210,7 +210,7 @@ function initFirebase() {
     db.collection('clientForms').onSnapshot(snapshot => {
       snapshot.docChanges().forEach(change => {
         const data = { id: change.doc.id, ...change.doc.data() };
-        if (data.status === 'submitted' && !processedFormIds.has(data.id)) {
+        if (data.status === 'submitted' && !data._imported && !processedFormIds.has(data.id)) {
           processedFormIds.add(data.id);
           // Remove existing record for same client if any, then prepend
           pendingFormSubmissions = pendingFormSubmissions.filter(f => f.id !== data.id);
@@ -959,7 +959,7 @@ function importFormSubmission(idx) {
   } else {
     // Create new client from form data
     const newClient = {
-      id: f.clientId || ('CLT-' + String(store.clients.length + 1).padStart(3, '0')),
+      id: f.clientId || nextClientId(),
       name:         f.clientName    || f.declName  || 'Unknown',
       type:         f.clientType                   || 'Residential',
       phone:        f.mobile        || f.clientPhone || '',
@@ -2679,7 +2679,8 @@ function saveAndSendForm(channel) {
   const phone = (document.getElementById('f-phone')?.value || '').trim();
   const email = (document.getElementById('f-email')?.value || '').trim();
   if (!name) { alert('Client name required'); return; }
-  const clientId = 'CLT-' + String(store.clients.length + 1).padStart(3, '0');
+  if (!confirmNotDuplicateClient(name)) return;
+  const clientId = nextClientId();
   store.clients.push({ id: clientId, name, type, phone, email, projects: 0, totalValue: 0 });
   store.activity.unshift({ text: `New client added: ${name}`, time: 'Just now', type: 'green' });
   save();
@@ -2694,7 +2695,8 @@ function saveNewClient(sendForm) {
   const phone = (document.getElementById('f-phone')?.value || '').trim();
   const email = (document.getElementById('f-email')?.value || '').trim();
   if (!name) { alert('Client name required'); return; }
-  const clientId = 'CLT-' + String(store.clients.length + 1).padStart(3, '0');
+  if (!confirmNotDuplicateClient(name)) return;
+  const clientId = nextClientId();
   store.clients.push({ id: clientId, name, type, phone, email, projects: 0, totalValue: 0 });
   store.activity.unshift({ text: `New client added: ${name}`, time: 'Just now', type: 'green' });
   save();
@@ -2703,6 +2705,24 @@ function saveNewClient(sendForm) {
   toast('Client added ✓');
   // If sendForm === false (Save Only), skip the form modal
   if (sendForm !== false) setTimeout(() => showFormShareModal(clientId, name, phone, email, type), 350);
+}
+// Warns before creating a client whose name (trimmed, case-insensitive) already exists.
+// Returns true to proceed (no duplicate, or user confirmed it's genuinely a different person),
+// false to abort. This is the actual gap that let duplicate client records get created silently.
+function confirmNotDuplicateClient(name) {
+  const existing = store.clients.find(c => c.name.trim().toLowerCase() === name.trim().toLowerCase());
+  if (!existing) return true;
+  return confirm(`A client named "${existing.name}" already exists (${existing.id}). Create another client with the same name?\n\nTap Cancel if this is the same person — edit their existing record instead.`);
+}
+// IDs based on array length collide after any deletion (length shrinks, next client reuses a
+// freed number). Derive from the highest existing numeric suffix instead so IDs never repeat.
+function nextClientId() {
+  let max = 0;
+  store.clients.forEach(c => {
+    const m = /^CLT-(\d+)$/.exec(c.id || '');
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  });
+  return 'CLT-' + String(max + 1).padStart(3, '0');
 }
 function editClient(i) {
   const c=store.clients[i];
