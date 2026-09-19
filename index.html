@@ -423,6 +423,7 @@ select option{background:var(--surface2);}
       <div class="nav-item" onclick="navigate('quotes')"><span class="nav-icon">◷</span>Quotes</div>
       <div class="nav-item" onclick="navigate('invoices')"><span class="nav-icon">◻</span>Invoices<span class="nav-badge" id="unpaid-count">0</span></div>
       <div class="nav-item" onclick="navigate('expenses')"><span class="nav-icon">⊕</span>Expenses</div>
+      <div class="nav-item" onclick="navigate('payroll')" style="color:var(--accent2)"><span class="nav-icon">💰</span>Payroll<span class="nav-badge" id="payroll-unpaid-badge" style="display:none;background:var(--accent2)">0</span></div>
     </div>
     <div class="nav-section">
       <div class="nav-label">Resources</div>
@@ -595,6 +596,75 @@ select option{background:var(--surface2);}
         <div class="panel">
           <div class="table-scroll"><table class="data-table"><thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Project</th><th>Supplier</th><th>Amount</th><th>Actions</th></tr></thead><tbody id="expenses-body"></tbody></table></div>
           <div class="card-list" id="expenses-cards"></div>
+        </div>
+      </div>
+
+      <!-- PAYROLL -->
+      <div class="page" id="page-payroll">
+        <div style="background:linear-gradient(135deg,rgba(212,168,67,.1),rgba(212,168,67,.04));border:1px solid rgba(212,168,67,.3);padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;gap:12px;">
+          <span style="font-size:24px;">💰</span>
+          <div style="flex:1;">
+            <div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--accent);text-transform:uppercase;margin-bottom:2px;">Payroll Processing</div>
+            <div style="font-size:12px;color:var(--text2)">Calculates wages from GPS Time Tracking sessions and each worker's day rate. UIF/PAYE are estimates from your configured settings — reconcile with SARS EMP201 before filing.</div>
+          </div>
+          <button class="action-btn" onclick="showPayrollSettings()" style="flex-shrink:0;color:var(--accent);border-color:var(--accent);">⚙ Settings</button>
+        </div>
+
+        <!-- DRAFT REVIEW (shown only while a run is being built) -->
+        <div id="payroll-draft-section" style="display:none;">
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-title">Review Draft — <span id="payroll-draft-period"></span></span>
+              <button class="action-btn" onclick="showAddWorkerToDraft()" style="margin-left:auto;">+ Add Worker</button>
+            </div>
+            <div class="table-scroll">
+              <table class="data-table">
+                <thead><tr><th>Worker</th><th>Hours/Days</th><th>Gross</th><th>UIF (Emp.)</th><th>PAYE</th><th>Other Deduction</th><th>Net Pay</th><th></th></tr></thead>
+                <tbody id="payroll-draft-body"></tbody>
+                <tfoot><tr id="payroll-draft-totals" style="background:var(--surface2);"></tr></tfoot>
+              </table>
+            </div>
+            <div class="card-list" id="payroll-draft-cards"></div>
+            <div style="padding:12px 14px;">
+              <div class="form-group full"><label>Notes (optional)</label><textarea id="pr-notes" rows="2" placeholder="e.g. Public holiday Monday — Site Foreman on leave"></textarea></div>
+              <div class="form-actions">
+                <button class="topbar-btn" onclick="finalizePayrollRun()">✓ FINALIZE RUN</button>
+                <button class="topbar-btn secondary" onclick="discardPayrollDraft()">✕ DISCARD DRAFT</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RUN DETAIL (shown only while viewing a specific finalized/voided run) -->
+        <div id="payroll-detail-section" style="display:none;">
+          <div class="panel">
+            <div class="panel-header">
+              <button class="action-btn" onclick="backToPayrollHistory()">← Back</button>
+              <span style="margin-left:10px;" id="payroll-detail-header"></span>
+              <button id="payroll-void-btn" class="action-btn danger" style="margin-left:auto;display:none;" onclick="showVoidPayrollRun(payrollViewingRunId)">Void Run</button>
+            </div>
+            <div class="table-scroll">
+              <table class="data-table">
+                <thead><tr><th>Worker</th><th>Hours/Days</th><th>Gross</th><th>UIF (Emp.)</th><th>PAYE</th><th>Net Pay</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody id="payroll-detail-body"></tbody>
+              </table>
+            </div>
+            <div class="card-list" id="payroll-detail-cards"></div>
+          </div>
+        </div>
+
+        <!-- RUN HISTORY (default view) -->
+        <div id="payroll-history-section">
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">Payroll Runs</span></div>
+            <div class="table-scroll">
+              <table class="data-table">
+                <thead><tr><th>Run</th><th>Period</th><th>Status</th><th>Workers</th><th>Gross</th><th>Net Pay</th><th></th></tr></thead>
+                <tbody id="payroll-history-body"></tbody>
+              </table>
+            </div>
+            <div class="card-list" id="payroll-history-cards"></div>
+          </div>
         </div>
       </div>
 
@@ -1494,7 +1564,8 @@ select option{background:var(--surface2);}
 </div>
 <div class="toast" id="toast"></div>
 
-<script src="core.js?v=20260804063733"></script>
-<script src="ai-features.js?v=20260804063733"></script>
+<script src="core.js?v=20260919081108"></script>
+<script src="ai-features.js?v=20260919081108"></script>
+<script src="payroll.js?v=20260919081108"></script>
 </body>
 </html>

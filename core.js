@@ -17,7 +17,13 @@ const SEED = {
   activity:      [
     { text:"Welcome to Otto's Renovation & Beautification ERP — System ready. Start by adding your first client.", time:'Now', type:'green' },
   ],
-  timeSessions:  []
+  timeSessions:  [],
+  // Bounded, tiny — lives in the shared erp/store doc like everything else
+  // above (no 1MB-cap concern the way growing collections have). Lazily
+  // initialised to full SARS/UIF defaults by payroll.js's getPayrollSettings()
+  // — kept null here rather than calling a payroll.js function directly,
+  // since SEED is evaluated by core.js before payroll.js has loaded.
+  payrollSettings: null
 };
 
 // Load from localStorage or fall back to seed data
@@ -198,6 +204,9 @@ function initFirebase() {
       if (meta.hasPendingWrites) return;
       if (remote._dev && remote._dev !== DEVICE_ID) {
         COLLECTIONS.forEach(k => { if (Array.isArray(remote[k])) store[k] = remote[k]; });
+        // payrollSettings is a bounded object, not an array — COLLECTIONS'
+        // Array.isArray guard above intentionally skips it, so merge it here.
+        if (remote.payrollSettings && typeof remote.payrollSettings === 'object') store.payrollSettings = remote.payrollSettings;
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(store)); } catch(e) {}
         renderPage(currentPage);
         updateSyncBadges();
@@ -273,6 +282,34 @@ function initFirebase() {
         if (currentPage === 'jobcards') renderJobCards();
       }
     }, err => console.warn('VariationOrders listener:', err));
+
+    // ── Payroll Runs — own collection, not nested in erp/store. Same
+    // reasoning as Job Cards/Variation Orders above: weekly wage records
+    // with UIF/PAYE detail accumulate indefinitely, and erp/store is a
+    // single shared, whole-blob-synced document capped at 1MB by Firestore.
+    // Guarded with typeof checks because this listener is registered here
+    // in core.js (called from the bootstrap at the bottom of this file,
+    // before payroll.js has loaded) but payrollRuns/updatePayrollBadge are
+    // declared in payroll.js. Safe in practice — onSnapshot only invokes
+    // this callback asynchronously, well after payroll.js has finished
+    // loading — but the guard keeps a future script-order change from
+    // throwing instead of just skipping a redundant sync tick.
+    db.collection('payrollRuns').onSnapshot(snapshot => {
+      if (typeof payrollRuns === 'undefined') return;
+      let changed = false;
+      snapshot.docChanges().forEach(change => {
+        if (change.doc.metadata.hasPendingWrites) return;
+        const data = change.doc.data();
+        const idx = payrollRuns.findIndex(r => r.id === data.id);
+        if (change.type === 'removed') { if (idx !== -1) { payrollRuns.splice(idx,1); changed = true; } }
+        else { if (idx !== -1) payrollRuns[idx] = data; else payrollRuns.unshift(data); changed = true; }
+      });
+      if (changed) {
+        savePayrollRunsLocal();
+        if (currentPage === 'payroll') renderPayrollPage();
+        if (typeof updatePayrollBadge === 'function') updatePayrollBadge();
+      }
+    }, err => console.warn('PayrollRuns listener:', err));
 
     syncEnabled = true;
     updateSyncIndicator('synced');
@@ -1031,7 +1068,7 @@ function navigate(page) {
   if (pageEl) pageEl.classList.add('active');
   currentPage = page;
 
-  const titles = { dashboard:'Dashboard', projects:'Projects', schedule:'Schedule', jobs:'Job Tickets', jobcards:'Job Cards', quotes:'Quotes', invoices:'Invoices', expenses:'Expenses', clients:'Clients', crew:'Crew & Workers', materials:'Materials Inventory', reports:'Reports', scanner:'Scan Supplier Invoice', describe:'Describe Project → BOM', timetrack:'GPS Time Tracking', blueprint:'Blueprint & Photo Analyzer' };
+  const titles = { dashboard:'Dashboard', projects:'Projects', schedule:'Schedule', jobs:'Job Tickets', jobcards:'Job Cards', quotes:'Quotes', invoices:'Invoices', expenses:'Expenses', clients:'Clients', crew:'Crew & Workers', materials:'Materials Inventory', reports:'Reports', scanner:'Scan Supplier Invoice', describe:'Describe Project → BOM', timetrack:'GPS Time Tracking', blueprint:'Blueprint & Photo Analyzer', payroll:'Payroll' };
   const buttons = {
     dashboard:{ primary:'+ NEW PROJECT', secondary:null }, projects:{ primary:'+ NEW PROJECT', secondary:'EXPORT' },
     jobs:{ primary:'+ NEW TICKET', secondary:null }, jobcards:{ primary:'+ NEW JOB CARD', secondary:null }, quotes:{ primary:'+ NEW QUOTE', secondary:'EXPORT' },
@@ -1040,6 +1077,7 @@ function navigate(page) {
     materials:{ primary:'+ ADD ITEM', secondary:null }, schedule:{ primary:'+ ASSIGN', secondary:null },
     reports:{ primary:'EXPORT PDF', secondary:null }, scanner:{ primary:'📷 SCAN INVOICE', secondary:null }, describe:{ primary:'💬 DESCRIBE PROJECT', secondary:null },
     timetrack:{ primary:'+ LOG MANUAL', secondary:'EXPORT CSV' }, blueprint:{ primary:'⊞ UPLOAD', secondary:null },
+    payroll:{ primary:'+ NEW PAYROLL RUN', secondary:null },
   };
   document.getElementById('page-title').textContent = titles[page] || page.toUpperCase();
   const b = buttons[page] || { primary:'+ NEW', secondary:null };
@@ -1053,7 +1091,7 @@ function navigate(page) {
 }
 
 function renderPage(p) {
-  const fn = { dashboard:renderDashboard, projects:renderProjects, schedule:renderSchedule, jobs:renderJobs, jobcards:renderJobCards, quotes:renderQuotes, invoices:renderInvoices, expenses:renderExpenses, clients:renderClients, crew:renderCrew, materials:renderMaterials, reports:renderReports, scanner:renderScanner, describe:renderDescribe, timetrack:renderTimeTrack, blueprint:renderBlueprint };
+  const fn = { dashboard:renderDashboard, projects:renderProjects, schedule:renderSchedule, jobs:renderJobs, jobcards:renderJobCards, quotes:renderQuotes, invoices:renderInvoices, expenses:renderExpenses, clients:renderClients, crew:renderCrew, materials:renderMaterials, reports:renderReports, scanner:renderScanner, describe:renderDescribe, timetrack:renderTimeTrack, blueprint:renderBlueprint, payroll:renderPayrollPage };
   if (fn[p]) fn[p]();
 }
 
@@ -1074,7 +1112,7 @@ function toast(msg) {
 }
 
 function statusBadge(s) {
-  const m = { active:'badge-blue', completed:'badge-green', 'on-hold':'badge-gray', paid:'badge-green', overdue:'badge-red', sent:'badge-yellow', draft:'badge-gray', approved:'badge-green', pending:'badge-yellow', declined:'badge-red', 'in-progress':'badge-blue', done:'badge-green', open:'badge-gray', 'on-site':'badge-green', available:'badge-yellow', leave:'badge-gray', high:'badge-red', medium:'badge-yellow', low:'badge-gray', Materials:'badge-blue', Labour:'badge-purple', Other:'badge-gray', credit:'badge-purple' };
+  const m = { active:'badge-blue', completed:'badge-green', 'on-hold':'badge-gray', paid:'badge-green', overdue:'badge-red', sent:'badge-yellow', draft:'badge-gray', approved:'badge-green', pending:'badge-yellow', declined:'badge-red', 'in-progress':'badge-blue', done:'badge-green', open:'badge-gray', 'on-site':'badge-green', available:'badge-yellow', leave:'badge-gray', high:'badge-red', medium:'badge-yellow', low:'badge-gray', Materials:'badge-blue', Labour:'badge-purple', Other:'badge-gray', credit:'badge-purple', finalized:'badge-green', voided:'badge-red' };
   return `<span class="badge ${m[s]||'badge-gray'}">${s}</span>`;
 }
 
@@ -2081,6 +2119,7 @@ function handlePrimary() {
     timetrack: showManualTimeEntry,
     blueprint: () => document.getElementById('bp-file-input').click(),
     jobcards: showNewJobCard,
+    payroll: showNewPayrollRun,
   };
   (m[currentPage] || (() => toast('Coming soon')))();
 }
@@ -2568,8 +2607,18 @@ function showNewExpense() {
     <div class="form-group"><label>Date</label><input type="date" id="f-date"></div>
   </div><div class="form-actions"><button class="topbar-btn" onclick="saveNewExpense()">LOG</button><button class="topbar-btn secondary" onclick="closeModalDirect()">CANCEL</button></div>`);
 }
+// Derives the next expense ID from the highest existing numeric ID rather than
+// array length — length-based IDs collide the moment anything but the very
+// last record is ever deleted (same class of bug nextClientId() already fixes
+// for clients). Needed for Payroll's Mark Paid flow, which creates expense
+// records programmatically and must not risk colliding with an existing ID.
+function nextExpenseId() {
+  let max = 0;
+  store.expenses.forEach(e => { const n = parseInt(e.id, 10); if (!isNaN(n)) max = Math.max(max, n); });
+  return max + 1;
+}
 function saveNewExpense() {
-  store.expenses.unshift({ id:store.expenses.length+1, desc:document.getElementById('f-desc').value, cat:document.getElementById('f-cat').value, project:document.getElementById('f-project').value, supplier:document.getElementById('f-supplier').value, amount:+document.getElementById('f-amount').value, date:document.getElementById('f-date').value });
+  store.expenses.unshift({ id:nextExpenseId(), desc:document.getElementById('f-desc').value, cat:document.getElementById('f-cat').value, project:document.getElementById('f-project').value, supplier:document.getElementById('f-supplier').value, amount:+document.getElementById('f-amount').value, date:document.getElementById('f-date').value });
   save(); closeModalDirect(); renderPage('expenses'); toast('Expense logged ✓');
 }
 function showNewClient() {
@@ -2743,10 +2792,25 @@ function showNewCrew() {
     <div class="form-group"><label>Role</label><select id="f-role"><option>Site Foreman</option><option>Electrician</option><option>Plumber</option><option>Tiler</option><option>Carpenter</option><option>Painter</option><option>Bricklayer</option><option>General Worker</option><option>Supervisor</option></select></div>
     <div class="form-group"><label>Phone</label><input type="tel" id="f-phone" placeholder="082 000 0000"></div>
     <div class="form-group"><label>Day Rate (R)</label><input type="number" id="f-rate" placeholder="0"></div>
+    <div class="form-group full" style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px;display:flex;gap:20px;">
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;text-transform:none;font-family:var(--fb);"><input type="checkbox" id="f-uif" checked style="width:auto;"> UIF enrolled</label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;text-transform:none;font-family:var(--fb);"><input type="checkbox" id="f-paye" style="width:auto;"> PAYE enrolled</label>
+    </div>
   </div><div class="form-actions"><button class="topbar-btn" onclick="saveNewCrew()">ADD</button><button class="topbar-btn secondary" onclick="closeModalDirect()">CANCEL</button></div>`);
 }
+// Derives the next crew ID from the highest existing numeric ID rather than
+// array length — length-based IDs collide as soon as a non-last worker is
+// ever deleted (e.g. crew [1,2,3], delete #2 → length 2 → next push reuses
+// id 3, colliding with the existing worker #3). Payroll links payslips to
+// crew.id, so a collision here would silently attribute one worker's wage
+// history to another — worth fixing now rather than after Payroll ships.
+function nextCrewId() {
+  let max = 0;
+  store.crew.forEach(c => { const n = parseInt(c.id, 10); if (!isNaN(n)) max = Math.max(max, n); });
+  return max + 1;
+}
 function saveNewCrew() {
-  store.crew.push({ id:store.crew.length+1, name:document.getElementById('f-name').value, role:document.getElementById('f-role').value, phone:document.getElementById('f-phone').value, rate:+document.getElementById('f-rate').value, status:'available', project:'-' });
+  store.crew.push({ id:nextCrewId(), name:document.getElementById('f-name').value, role:document.getElementById('f-role').value, phone:document.getElementById('f-phone').value, rate:+document.getElementById('f-rate').value, status:'available', project:'-', uifEnrolled:document.getElementById('f-uif').checked, payeEnrolled:document.getElementById('f-paye').checked });
   save(); closeModalDirect(); renderPage('crew'); toast('Worker added ✓');
 }
 function editCrew(i) {
@@ -2758,10 +2822,14 @@ function editCrew(i) {
     <div class="form-group"><label>Day Rate (R)</label><input type="number" id="f-rate" value="${c.rate}"></div>
     <div class="form-group"><label>Status</label><select id="f-status"><option value="on-site" ${c.status==='on-site'?'selected':''}>On Site</option><option value="available" ${c.status==='available'?'selected':''}>Available</option><option value="leave" ${c.status==='leave'?'selected':''}>On Leave</option></select></div>
     <div class="form-group"><label>Project</label><select id="f-project"><option value="-">None</option>${store.projects.filter(p=>p.status==='active').map(p=>`<option value="${p.id}" ${c.project===p.id?'selected':''}>${p.id}</option>`).join('')}</select></div>
+    <div class="form-group full" style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px;display:flex;gap:20px;">
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;text-transform:none;font-family:var(--fb);"><input type="checkbox" id="f-uif" ${c.uifEnrolled!==false?'checked':''} style="width:auto;"> UIF enrolled</label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;text-transform:none;font-family:var(--fb);"><input type="checkbox" id="f-paye" ${c.payeEnrolled?'checked':''} style="width:auto;"> PAYE enrolled</label>
+    </div>
   </div><div class="form-actions"><button class="topbar-btn" onclick="saveEditCrew(${i})">SAVE</button><button class="topbar-btn secondary" onclick="closeModalDirect()">CANCEL</button></div>`);
 }
 function saveEditCrew(i) {
-  store.crew[i]={...store.crew[i], name:document.getElementById('f-name').value, role:document.getElementById('f-role').value, phone:document.getElementById('f-phone').value, rate:+document.getElementById('f-rate').value, status:document.getElementById('f-status').value, project:document.getElementById('f-project').value};
+  store.crew[i]={...store.crew[i], name:document.getElementById('f-name').value, role:document.getElementById('f-role').value, phone:document.getElementById('f-phone').value, rate:+document.getElementById('f-rate').value, status:document.getElementById('f-status').value, project:document.getElementById('f-project').value, uifEnrolled:document.getElementById('f-uif').checked, payeEnrolled:document.getElementById('f-paye').checked};
   save(); closeModalDirect(); renderPage('crew'); toast('Worker updated ✓');
 }
 function showNewMaterial() {
@@ -4637,6 +4705,7 @@ function restoreData() {
         if (!valid) { alert('Invalid backup file.'); return; }
         const merged = { ...JSON.parse(JSON.stringify(SEED)), ...data };
         COLLECTIONS.forEach(k => { store[k] = merged[k]; });
+        store.payrollSettings = merged.payrollSettings; // object, not covered by the array-only COLLECTIONS loop above
         saveStore(store);
         renderPage(currentPage);
         toast('Data restored' + (syncEnabled ? ' & synced to Firebase ✓' : ' locally ✓'));
@@ -4675,3 +4744,4 @@ if (_formToken && _formPid) {
   renderDashboard();
   initFirebase(); // start Firebase sync + clientForms listener
 }
+
