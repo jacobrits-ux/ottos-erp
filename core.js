@@ -2,7 +2,27 @@
 // ============ DATA STORE ============
 // ── PERSISTENT STORAGE ──
 const STORAGE_KEY = 'ottos_erp_v2_clean';
-const COLLECTIONS = ['projects','clients','crew','materials','invoices','expenses','quotes','jobs','activity','timeSessions'];
+const COLLECTIONS = ['projects','clients','crew','materials','invoices','expenses','quotes','jobs','activity','timeSessions','expenseCategories'];
+
+// Editable, not hardcoded — a landscaping business's categories aren't an
+// electrician's. Seeded with a sensible multi-trade default set; each
+// business (and, later, each SaaS tenant) can add/rename/retire its own via
+// Manage Categories on the Expenses page. glCode is optional and blank by
+// default — there's no accounting-system integration to feed yet (parked
+// until VAT registration or real demand per the roadmap), but the field
+// costs nothing to have ready for the day a bookkeeper-ready export is
+// worth building. 'Equipment' is kept alongside the new, more granular
+// 'Equipment Hire'/'Equipment Purchase' split rather than replaced, since
+// existing expense records already reference it by name and there's no
+// edit-expense function to recategorize them after the fact — retire it
+// via Manage Categories once nothing new needs it, if ever.
+function defaultExpenseCategories() {
+  const palette = ['badge-blue', 'badge-purple', 'badge-yellow', 'badge-gray'];
+  const names = ['Materials', 'Labour', 'Subcontractors', 'Equipment', 'Equipment Hire', 'Equipment Purchase', 'Vehicle & Transport', 'Waste Removal', 'Permits & Council Fees', 'Insurance', 'Professional & Admin Fees'];
+  const cats = names.map((name, i) => ({ name, glCode: '', color: palette[i % palette.length], active: true }));
+  cats.push({ name: 'Other', glCode: '', color: 'badge-gray', active: true });
+  return cats;
+}
 
 // Default seed data — only used on very first launch
 const SEED = {
@@ -18,6 +38,7 @@ const SEED = {
     { text:"Welcome to Otto's Renovation & Beautification ERP — System ready. Start by adding your first client.", time:'Now', type:'green' },
   ],
   timeSessions:  [],
+  expenseCategories: defaultExpenseCategories(),
   // Bounded, tiny — lives in the shared erp/store doc like everything else
   // above (no 1MB-cap concern the way growing collections have). Lazily
   // initialised to full SARS/UIF defaults by payroll.js's getPayrollSettings()
@@ -81,6 +102,7 @@ let syncEnabled = false;
 const store = loadStore();
 // Ensure timeSessions exists on older stores that pre-date this field
 if (!Array.isArray(store.timeSessions)) store.timeSessions = [];
+if (!Array.isArray(store.expenseCategories) || store.expenseCategories.length === 0) store.expenseCategories = defaultExpenseCategories();
 
 // Call after any change to persist it
 function save() { saveStore(store); }
@@ -1112,8 +1134,25 @@ function toast(msg) {
 }
 
 function statusBadge(s) {
-  const m = { active:'badge-blue', completed:'badge-green', 'on-hold':'badge-gray', paid:'badge-green', overdue:'badge-red', sent:'badge-yellow', draft:'badge-gray', approved:'badge-green', pending:'badge-yellow', declined:'badge-red', 'in-progress':'badge-blue', done:'badge-green', open:'badge-gray', 'on-site':'badge-green', available:'badge-yellow', leave:'badge-gray', high:'badge-red', medium:'badge-yellow', low:'badge-gray', Materials:'badge-blue', Labour:'badge-purple', Other:'badge-gray', credit:'badge-purple', finalized:'badge-green', voided:'badge-red' };
+  const m = { active:'badge-blue', completed:'badge-green', 'on-hold':'badge-gray', paid:'badge-green', overdue:'badge-red', sent:'badge-yellow', draft:'badge-gray', approved:'badge-green', pending:'badge-yellow', declined:'badge-red', 'in-progress':'badge-blue', done:'badge-green', open:'badge-gray', 'on-site':'badge-green', available:'badge-yellow', leave:'badge-gray', high:'badge-red', medium:'badge-yellow', low:'badge-gray', credit:'badge-purple', finalized:'badge-green', voided:'badge-red' };
   return `<span class="badge ${m[s]||'badge-gray'}">${s}</span>`;
+}
+
+// Expense categories are user-editable and unbounded, unlike the fixed
+// status/workflow values statusBadge() above covers — so they get their own
+// lookup against store.expenseCategories rather than a hardcoded map entry
+// per name. Falls back to a plain gray badge for any expense whose category
+// was since retired or renamed (still shows correctly, just uncolored).
+function expenseCategoryBadge(catName) {
+  const cat = (store.expenseCategories || []).find(c => c.name === catName);
+  return `<span class="badge ${cat ? cat.color : 'badge-gray'}">${catName || 'Other'}</span>`;
+}
+// Maps a badge CSS class to the raw CSS variable it uses for text color, so
+// the Expenses page's stat-cell numbers can match a category's badge color
+// without duplicating a second color table.
+function badgeColorToCssVar(cls) {
+  const map = { 'badge-blue': 'var(--blue)', 'badge-purple': 'var(--purple)', 'badge-yellow': 'var(--accent)', 'badge-gray': 'var(--text3)', 'badge-green': 'var(--green)', 'badge-red': 'var(--red)' };
+  return map[cls] || 'var(--text2)';
 }
 
 // ── Client-first, project-optional: shared across Quotes / Invoices / Job Cards ──
@@ -1307,7 +1346,7 @@ function renderExpenseCards() {
     <div class="card-item">
       <div class="card-item-header">
         <div><div class="card-item-title">${e.desc}</div><div class="card-item-id">${dt(e.date)}</div></div>
-        ${statusBadge(e.cat)}
+        ${expenseCategoryBadge(e.cat)}
       </div>
       <div class="card-item-row"><span style="color:var(--text3)">Project</span><span class="badge badge-blue">${e.project}</span></div>
       <div class="card-item-row"><span style="color:var(--text3)">Supplier</span><span style="font-size:12px">${e.supplier}</span></div>
@@ -1618,13 +1657,21 @@ function renderInvoices() {
 function renderExpenses() {
   const total = store.expenses.reduce((s,e)=>s+e.amount,0);
   document.getElementById('exp-total').textContent = fmt(total);
-  document.getElementById('exp-materials').textContent = fmt(store.expenses.filter(e=>e.cat==='Materials').reduce((s,e)=>s+e.amount,0));
-  document.getElementById('exp-labor').textContent = fmt(store.expenses.filter(e=>e.cat==='Labour').reduce((s,e)=>s+e.amount,0));
-  document.getElementById('exp-other').textContent = fmt(store.expenses.filter(e=>e.cat==='Other').reduce((s,e)=>s+e.amount,0));
+  // Top 3 categories by spend, not a hardcoded Materials/Labour/Other —
+  // adapts automatically to whatever categories this business (or a future
+  // SaaS tenant) actually uses, and to which ones it spends the most on.
+  const byCat = {};
+  store.expenses.forEach(e => { const c = e.cat || 'Other'; byCat[c] = (byCat[c] || 0) + e.amount; });
+  const topCats = Object.entries(byCat).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const catStatsEl = document.getElementById('exp-cat-stats');
+  if (catStatsEl) catStatsEl.innerHTML = topCats.map(([name, amt]) => {
+    const catDef = (store.expenseCategories || []).find(c => c.name === name);
+    return `<div class="stat-cell"><div class="stat-cell-value" style="color:${badgeColorToCssVar(catDef ? catDef.color : 'badge-gray')}">${fmt(amt)}</div><div class="stat-cell-label">${name}</div></div>`;
+  }).join('');
   document.getElementById('expenses-body').innerHTML = store.expenses.map((e,i) => `
     <tr>
       <td class="mono">${dt(e.date)}</td><td>${e.desc}</td>
-      <td>${statusBadge(e.cat)}</td>
+      <td>${expenseCategoryBadge(e.cat)}</td>
       <td><span class="badge badge-blue">${e.project}</span></td><td>${e.supplier}</td>
       <td style="font-family:var(--fm);color:var(--accent)">${fmt(e.amount)}</td>
       <td><button class="action-btn danger" onclick="deleteItem('expenses',${i})">Del</button></td>
@@ -2600,7 +2647,7 @@ function saveEditQuote() {
 function showNewExpense() {
   openModal('LOG EXPENSE', `<div class="form-grid">
     <div class="form-group full"><label>Description</label><input type="text" id="f-desc" placeholder="e.g. Tile supply for bathroom"></div>
-    <div class="form-group"><label>Category</label><select id="f-cat"><option>Materials</option><option>Labour</option><option>Equipment</option><option>Other</option></select></div>
+    <div class="form-group"><label>Category</label><select id="f-cat">${store.expenseCategories.filter(c=>c.active).map(c=>`<option>${c.name}</option>`).join('')}</select></div>
     <div class="form-group"><label>Project</label><select id="f-project"><option value="-">General</option>${store.projects.map(p=>`<option value="${p.id}">${p.id}</option>`).join('')}</select></div>
     <div class="form-group"><label>Supplier</label><input type="text" id="f-supplier" placeholder="Supplier name"></div>
     <div class="form-group"><label>Amount (R)</label><input type="number" id="f-amount" placeholder="0"></div>
@@ -2620,6 +2667,87 @@ function nextExpenseId() {
 function saveNewExpense() {
   store.expenses.unshift({ id:nextExpenseId(), desc:document.getElementById('f-desc').value, cat:document.getElementById('f-cat').value, project:document.getElementById('f-project').value, supplier:document.getElementById('f-supplier').value, amount:+document.getElementById('f-amount').value, date:document.getElementById('f-date').value });
   save(); closeModalDirect(); renderPage('expenses'); toast('Expense logged ✓');
+}
+
+// ── Expense category management ──
+function showManageExpenseCategories() {
+  renderManageExpenseCategoriesModal();
+}
+
+function renderManageExpenseCategoriesModal() {
+  const cats = store.expenseCategories;
+  openModal('⚙ MANAGE EXPENSE CATEGORIES', `
+    <div style="font-family:var(--fm);font-size:10px;color:var(--text3);margin-bottom:12px;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);">
+      Retiring a category hides it from new expenses but keeps existing expenses that use it fully intact. Renaming updates every existing expense in that category to the new name. GL Code is optional — only useful once you're feeding a bookkeeper or accounting system.
+    </div>
+    <div class="table-scroll" style="max-height:320px;overflow-y:auto;">
+      <table class="data-table">
+        <thead><tr><th>Category</th><th>GL Code</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+          ${cats.map((c, i) => `
+            <tr>
+              <td><input type="text" value="${c.name}" style="width:150px;font-family:var(--fb);${c.active ? '' : 'opacity:.5;'}" onchange="renameExpenseCategory(${i}, this.value)"></td>
+              <td><input type="text" value="${c.glCode || ''}" placeholder="—" style="width:80px;font-family:var(--fm);" onchange="updateExpenseCategoryGLCode(${i}, this.value)"></td>
+              <td>${c.active ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-gray">Retired</span>'}</td>
+              <td><button class="action-btn" onclick="toggleExpenseCategoryActive(${i})">${c.active ? 'Retire' : 'Reactivate'}</button></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="form-grid" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
+      <div class="form-group"><label>New Category Name</label><input type="text" id="f-new-cat-name" placeholder="e.g. Skips & Waste"></div>
+      <div class="form-group"><label>GL Code (optional)</label><input type="text" id="f-new-cat-gl" placeholder="—"></div>
+    </div>
+    <div class="form-actions">
+      <button class="topbar-btn" onclick="addExpenseCategoryFromModal()">+ ADD CATEGORY</button>
+      <button class="topbar-btn secondary" onclick="closeModalDirect()">CLOSE</button>
+    </div>`);
+}
+
+function addExpenseCategoryFromModal() {
+  const nameEl = document.getElementById('f-new-cat-name');
+  const glEl = document.getElementById('f-new-cat-gl');
+  const name = nameEl.value.trim();
+  if (!name) { alert('Category name is required'); return; }
+  if (store.expenseCategories.some(c => c.name.toLowerCase() === name.toLowerCase())) { alert('A category with that name already exists'); return; }
+  const palette = ['badge-blue', 'badge-purple', 'badge-yellow', 'badge-gray'];
+  store.expenseCategories.push({ name, glCode: glEl.value.trim(), color: palette[store.expenseCategories.length % palette.length], active: true });
+  save();
+  renderManageExpenseCategoriesModal();
+  toast('Category added ✓');
+}
+
+// Renaming cascades to every existing expense in that category — there's no
+// edit-expense function to fix them up individually afterward, and leaving
+// old expenses pointing at a name that no longer exists in the category
+// list would silently orphan them from Manage Categories (Reports' category
+// breakdown groups by whatever string is on the expense regardless, so it
+// wouldn't break there — but this keeps everything consistent everywhere).
+function renameExpenseCategory(i, newName) {
+  newName = newName.trim();
+  const oldName = store.expenseCategories[i].name;
+  if (!newName || newName === oldName) { renderManageExpenseCategoriesModal(); return; }
+  if (store.expenseCategories.some((c, idx) => idx !== i && c.name.toLowerCase() === newName.toLowerCase())) {
+    alert('A category with that name already exists'); renderManageExpenseCategoriesModal(); return;
+  }
+  store.expenseCategories[i].name = newName;
+  let updated = 0;
+  store.expenses.forEach(e => { if (e.cat === oldName) { e.cat = newName; updated++; } });
+  save();
+  renderManageExpenseCategoriesModal();
+  toast(updated > 0 ? `Renamed — ${updated} expense(s) updated ✓` : 'Renamed ✓');
+}
+
+function updateExpenseCategoryGLCode(i, glCode) {
+  store.expenseCategories[i].glCode = glCode.trim();
+  save();
+  toast('GL code saved ✓');
+}
+
+function toggleExpenseCategoryActive(i) {
+  store.expenseCategories[i].active = !store.expenseCategories[i].active;
+  save();
+  renderManageExpenseCategoriesModal();
 }
 function showNewClient() {
   openModal('NEW CLIENT', `

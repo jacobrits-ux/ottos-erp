@@ -589,11 +589,10 @@ select option{background:var(--surface2);}
       <div class="page" id="page-expenses">
         <div class="stat-row">
           <div class="stat-cell"><div class="stat-cell-value" id="exp-total">R0</div><div class="stat-cell-label">Total</div></div>
-          <div class="stat-cell"><div class="stat-cell-value" id="exp-materials" style="color:var(--blue)">R0</div><div class="stat-cell-label">Materials</div></div>
-          <div class="stat-cell"><div class="stat-cell-value" id="exp-labor" style="color:var(--purple)">R0</div><div class="stat-cell-label">Labour</div></div>
-          <div class="stat-cell"><div class="stat-cell-value" id="exp-other" style="color:var(--accent)">R0</div><div class="stat-cell-label">Other</div></div>
+          <div id="exp-cat-stats" style="display:contents"></div>
         </div>
         <div class="panel">
+          <div class="panel-header"><span class="panel-title">Expenses</span><button class="action-btn" onclick="showManageExpenseCategories()" style="margin-left:auto;">⚙ Categories</button></div>
           <div class="table-scroll"><table class="data-table"><thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Project</th><th>Supplier</th><th>Amount</th><th>Actions</th></tr></thead><tbody id="expenses-body"></tbody></table></div>
           <div class="card-list" id="expenses-cards"></div>
         </div>
@@ -1564,8 +1563,8 @@ select option{background:var(--surface2);}
 </div>
 <div class="toast" id="toast"></div>
 
-<script src="core.js?v=20260920013338"></script>
-<script src="ai-features.js?v=20260920013338"></script>
-<script src="payroll.js?v=20260920013338"></script>
+<script src="core.js?v=20260920074334"></script>
+<script src="ai-features.js?v=20260920074334"></script>
+<script src="payroll.js?v=20260920074334"></script>
 </body>
 </html>
