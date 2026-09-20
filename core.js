@@ -2792,6 +2792,7 @@ function showNewCrew() {
     <div class="form-group"><label>Role</label><select id="f-role"><option>Site Foreman</option><option>Electrician</option><option>Plumber</option><option>Tiler</option><option>Carpenter</option><option>Painter</option><option>Bricklayer</option><option>General Worker</option><option>Supervisor</option></select></div>
     <div class="form-group"><label>Phone</label><input type="tel" id="f-phone" placeholder="082 000 0000"></div>
     <div class="form-group"><label>Day Rate (R)</label><input type="number" id="f-rate" placeholder="0"></div>
+    <div class="form-group full"><label>SARS Tax Number (optional)</label><input type="text" id="f-tax-number" placeholder="e.g. 0000000000"></div>
     <div class="form-group full" style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px;display:flex;gap:20px;">
       <label style="display:flex;align-items:center;gap:8px;font-size:12px;text-transform:none;font-family:var(--fb);"><input type="checkbox" id="f-uif" checked style="width:auto;"> UIF enrolled</label>
       <label style="display:flex;align-items:center;gap:8px;font-size:12px;text-transform:none;font-family:var(--fb);"><input type="checkbox" id="f-paye" style="width:auto;"> PAYE enrolled</label>
@@ -2810,7 +2811,12 @@ function nextCrewId() {
   return max + 1;
 }
 function saveNewCrew() {
-  store.crew.push({ id:nextCrewId(), name:document.getElementById('f-name').value, role:document.getElementById('f-role').value, phone:document.getElementById('f-phone').value, rate:+document.getElementById('f-rate').value, status:'available', project:'-', uifEnrolled:document.getElementById('f-uif').checked, payeEnrolled:document.getElementById('f-paye').checked });
+  // taxNumber is captured independently of the employer's own SARS
+  // registration status (Payroll Settings' payeRegistered) — a worker can
+  // have their own tax number whether or not this employer currently runs
+  // formal PAYE, and capturing it now avoids a scramble to backfill it if
+  // the business registers later.
+  store.crew.push({ id:nextCrewId(), name:document.getElementById('f-name').value, role:document.getElementById('f-role').value, phone:document.getElementById('f-phone').value, rate:+document.getElementById('f-rate').value, status:'available', project:'-', taxNumber:document.getElementById('f-tax-number').value.trim(), uifEnrolled:document.getElementById('f-uif').checked, payeEnrolled:document.getElementById('f-paye').checked });
   save(); closeModalDirect(); renderPage('crew'); toast('Worker added ✓');
 }
 function editCrew(i) {
@@ -2822,6 +2828,7 @@ function editCrew(i) {
     <div class="form-group"><label>Day Rate (R)</label><input type="number" id="f-rate" value="${c.rate}"></div>
     <div class="form-group"><label>Status</label><select id="f-status"><option value="on-site" ${c.status==='on-site'?'selected':''}>On Site</option><option value="available" ${c.status==='available'?'selected':''}>Available</option><option value="leave" ${c.status==='leave'?'selected':''}>On Leave</option></select></div>
     <div class="form-group"><label>Project</label><select id="f-project"><option value="-">None</option>${store.projects.filter(p=>p.status==='active').map(p=>`<option value="${p.id}" ${c.project===p.id?'selected':''}>${p.id}</option>`).join('')}</select></div>
+    <div class="form-group full"><label>SARS Tax Number (optional)</label><input type="text" id="f-tax-number" value="${c.taxNumber || ''}" placeholder="e.g. 0000000000"></div>
     <div class="form-group full" style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px;display:flex;gap:20px;">
       <label style="display:flex;align-items:center;gap:8px;font-size:12px;text-transform:none;font-family:var(--fb);"><input type="checkbox" id="f-uif" ${c.uifEnrolled!==false?'checked':''} style="width:auto;"> UIF enrolled</label>
       <label style="display:flex;align-items:center;gap:8px;font-size:12px;text-transform:none;font-family:var(--fb);"><input type="checkbox" id="f-paye" ${c.payeEnrolled?'checked':''} style="width:auto;"> PAYE enrolled</label>
@@ -2829,7 +2836,7 @@ function editCrew(i) {
   </div><div class="form-actions"><button class="topbar-btn" onclick="saveEditCrew(${i})">SAVE</button><button class="topbar-btn secondary" onclick="closeModalDirect()">CANCEL</button></div>`);
 }
 function saveEditCrew(i) {
-  store.crew[i]={...store.crew[i], name:document.getElementById('f-name').value, role:document.getElementById('f-role').value, phone:document.getElementById('f-phone').value, rate:+document.getElementById('f-rate').value, status:document.getElementById('f-status').value, project:document.getElementById('f-project').value, uifEnrolled:document.getElementById('f-uif').checked, payeEnrolled:document.getElementById('f-paye').checked};
+  store.crew[i]={...store.crew[i], name:document.getElementById('f-name').value, role:document.getElementById('f-role').value, phone:document.getElementById('f-phone').value, rate:+document.getElementById('f-rate').value, status:document.getElementById('f-status').value, project:document.getElementById('f-project').value, taxNumber:document.getElementById('f-tax-number').value.trim(), uifEnrolled:document.getElementById('f-uif').checked, payeEnrolled:document.getElementById('f-paye').checked};
   save(); closeModalDirect(); renderPage('crew'); toast('Worker updated ✓');
 }
 function showNewMaterial() {

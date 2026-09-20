@@ -56,6 +56,15 @@ function defaultPayrollSettings() {
     payeEnabled: false,              // OFF by default — enable per your own judgement on whether formal PAYE applies to this crew; can also be toggled per worker
     primaryRebate: 17820,            // SARS 2026/2027 annual primary rebate (all ages — secondary/tertiary age rebates are not applied here since crew records don't capture date of birth; this is the conservative direction, i.e. slightly over-withholds rather than under-withholds for a 65+ worker)
     taxBrackets: defaultPayrollTaxBrackets(),
+    // Employer's own SARS registration status — independent of any single
+    // worker's UIF/PAYE enrollment above. OFF by default (matches an
+    // unregistered business). Gates the Tax Year Summary below: there's
+    // nothing to reconcile against an EMP501 without a PAYE reference
+    // number, so that feature stays hidden until this is populated. A
+    // future multi-tenant version scopes this per company rather than
+    // globally, but the field itself doesn't change shape.
+    payeRegistered: false,
+    payeReferenceNumber: '',
     lastUpdated: null,
   };
 }
@@ -727,6 +736,13 @@ function showPayrollSettings() {
       <div class="form-group"><label>Tax Year Label</label><input type="text" id="f-ps-year" value="${s.taxYear}"></div>
       <div class="form-group"><label>Standard Hours / Day</label><input type="number" id="f-ps-hrs" value="${s.standardHoursPerDay}" step="0.5"></div>
       <div class="form-group full" style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px;">
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;text-transform:none;font-family:var(--fb);"><input type="checkbox" id="f-ps-registered" ${s.payeRegistered ? 'checked' : ''} style="width:auto;" onchange="document.getElementById('f-ps-ref-wrap').style.display=this.checked?'':'none'"> Registered as an employer with SARS (PAYE/UIF)</label>
+      </div>
+      <div class="form-group full" id="f-ps-ref-wrap" style="display:${s.payeRegistered ? '' : 'none'};">
+        <label>PAYE Reference Number</label><input type="text" id="f-ps-ref" value="${s.payeReferenceNumber || ''}" placeholder="7000000000">
+        <div style="font-family:var(--fm);font-size:9px;color:var(--text3);margin-top:4px;">Unlocks the Tax Year Summary below Payroll Runs — there's nothing to reconcile against an EMP501 without this.</div>
+      </div>
+      <div class="form-group full" style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px;">
         <label style="display:flex;align-items:center;gap:8px;font-size:12px;text-transform:none;font-family:var(--fb);"><input type="checkbox" id="f-ps-uif-on" ${s.uifEnabled ? 'checked' : ''} style="width:auto;"> Enable UIF calculation</label>
       </div>
       <div class="form-group"><label>UIF Employee Rate (%)</label><input type="number" id="f-ps-uif-emp" value="${s.uifEmployeeRate * 100}" step="0.1"></div>
@@ -757,6 +773,8 @@ function savePayrollSettingsFromModal() {
   } catch (e) { alert('Tax Brackets JSON is invalid — settings not saved'); return; }
   s.taxYear = document.getElementById('f-ps-year').value || s.taxYear;
   s.standardHoursPerDay = parseFloat(document.getElementById('f-ps-hrs').value) || 8;
+  s.payeRegistered = document.getElementById('f-ps-registered').checked;
+  s.payeReferenceNumber = document.getElementById('f-ps-ref').value.trim();
   s.uifEnabled = document.getElementById('f-ps-uif-on').checked;
   s.uifEmployeeRate = (parseFloat(document.getElementById('f-ps-uif-emp').value) || 0) / 100;
   s.uifEmployerRate = (parseFloat(document.getElementById('f-ps-uif-empr').value) || 0) / 100;
@@ -845,7 +863,107 @@ function renderPayrollDraftReview() {
     </div>`).join('') || '<div style="text-align:center;padding:20px;color:var(--text3);">No workers in this draft</div>';
 }
 
+// ── Tax Year Summary — gated behind Settings.payeRegistered, since
+// there's nothing to reconcile against an EMP501 without an employer PAYE
+// reference number. Aggregates finalized (non-voided) Payroll Runs per
+// worker across a SARS tax year (1 Mar–end Feb). This is a working
+// summary to prepare an IRP5/EMP501 from — not a SARS submission format
+// in itself; that still goes through e@syFile/eFiling.
+let currentTaxYearSummary = null;
+
+function getTaxYearBounds(taxYearLabel) {
+  const parts = String(taxYearLabel).split('/');
+  const startYear = parseInt(parts[0], 10);
+  const endYear = parseInt(parts[1], 10) || (startYear + 1);
+  const isLeap = y => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+  const febEnd = isLeap(endYear) ? 29 : 28;
+  return { start: `${startYear}-03-01`, end: `${endYear}-02-${String(febEnd).padStart(2, '0')}` };
+}
+
+function currentSATaxYearLabel() {
+  const now = new Date();
+  const startYear = now.getMonth() >= 2 ? now.getFullYear() : now.getFullYear() - 1; // Mar-Dec: this year starts it; Jan-Feb: previous year does
+  return `${startYear}/${startYear + 1}`;
+}
+
+function getAvailableTaxYears() {
+  const years = new Set([currentSATaxYearLabel()]);
+  payrollRuns.filter(r => r.status === 'finalized').forEach(r => {
+    const d = new Date(r.periodStart + 'T00:00:00');
+    const y = d.getMonth() >= 2 ? d.getFullYear() : d.getFullYear() - 1;
+    years.add(`${y}/${y + 1}`);
+  });
+  return Array.from(years).sort().reverse();
+}
+
+function buildTaxYearSummary(taxYearLabel) {
+  const { start, end } = getTaxYearBounds(taxYearLabel);
+  const runsInYear = payrollRuns.filter(r => r.status === 'finalized' && r.periodStart >= start && r.periodStart <= end);
+  const byWorker = {};
+  runsInYear.forEach(run => {
+    run.payslips.forEach(p => {
+      if (!byWorker[p.crewId]) byWorker[p.crewId] = { crewId: p.crewId, worker: p.worker, role: p.role, taxNumber: '', grossPay: 0, uifEmployee: 0, uifEmployer: 0, payeAmount: 0, runCount: 0 };
+      const w = byWorker[p.crewId];
+      w.grossPay += p.grossPay; w.uifEmployee += p.uifEmployee; w.uifEmployer += p.uifEmployer; w.payeAmount += p.payeAmount; w.runCount += 1;
+    });
+  });
+  Object.values(byWorker).forEach(w => {
+    const c = store.crew.find(cr => cr.id === w.crewId);
+    w.taxNumber = (c && c.taxNumber) || '';
+    w.grossPay = Math.round(w.grossPay * 100) / 100;
+    w.uifEmployee = Math.round(w.uifEmployee * 100) / 100;
+    w.uifEmployer = Math.round(w.uifEmployer * 100) / 100;
+    w.payeAmount = Math.round(w.payeAmount * 100) / 100;
+  });
+  return { taxYear: taxYearLabel, periodStart: start, periodEnd: end, workers: Object.values(byWorker).sort((a, b) => a.worker.localeCompare(b.worker)), runCount: runsInYear.length };
+}
+
+function showTaxYearSummary() {
+  if (!getPayrollSettings().payeRegistered) { toast('Enable "Registered as an employer with SARS" in Payroll Settings first'); return; }
+  currentTaxYearSummary = buildTaxYearSummary(currentSATaxYearLabel());
+  renderTaxYearSummaryModal();
+}
+
+function changeTaxYearSummary(label) {
+  currentTaxYearSummary = buildTaxYearSummary(label);
+  renderTaxYearSummaryModal();
+}
+
+function renderTaxYearSummaryModal() {
+  const summary = currentTaxYearSummary;
+  const missingTax = summary.workers.filter(w => !w.taxNumber);
+  openModal(`📋 TAX YEAR SUMMARY`, `
+    <select id="f-tys-year" onchange="changeTaxYearSummary(this.value)" style="margin-bottom:10px;">${getAvailableTaxYears().map(y => `<option value="${y}" ${y === summary.taxYear ? 'selected' : ''}>${y}</option>`).join('')}</select>
+    <div style="font-family:var(--fm);font-size:10px;color:var(--text3);margin-bottom:12px;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);">
+      ${dt(summary.periodStart)} to ${dt(summary.periodEnd)} · ${summary.runCount} finalized run(s). A working summary to prepare your EMP501/IRP5s from — not a SARS submission format itself; that still goes through e@syFile or eFiling.
+    </div>
+    ${missingTax.length ? `<div style="background:rgba(224,82,82,.08);border:1px solid rgba(224,82,82,.25);padding:8px 12px;margin-bottom:12px;font-size:11px;color:var(--text2)">${missingTax.length} worker(s) have no tax number on file — add it on their Crew record before filing: ${missingTax.map(w => w.worker).join(', ')}</div>` : ''}
+    <div class="table-scroll" style="max-height:280px;overflow-y:auto;">
+      <table class="data-table">
+        <thead><tr><th>Worker</th><th>Tax No.</th><th>Gross</th><th>UIF (Emp.)</th><th>UIF (Empr.)</th><th>PAYE</th></tr></thead>
+        <tbody>
+          ${summary.workers.map(w => `<tr><td>${w.worker}</td><td class="mono">${w.taxNumber || '—'}</td><td style="font-family:var(--fm)">${fmt(w.grossPay)}</td><td style="font-family:var(--fm)">${fmt(w.uifEmployee)}</td><td style="font-family:var(--fm)">${fmt(w.uifEmployer)}</td><td style="font-family:var(--fm)">${fmt(w.payeAmount)}</td></tr>`).join('') || `<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:16px;">No finalized runs in this tax year yet</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+    <div class="form-actions">
+      <button class="topbar-btn" onclick="downloadTaxYearSummaryCSV()">⬇ DOWNLOAD CSV</button>
+      <button class="topbar-btn secondary" onclick="closeModalDirect()">CLOSE</button>
+    </div>`);
+}
+
+function downloadTaxYearSummaryCSV() {
+  if (!currentTaxYearSummary) return;
+  const rows = [['Worker', 'Tax Number', 'Role', 'Gross Pay', 'UIF Employee', 'UIF Employer', 'PAYE']];
+  currentTaxYearSummary.workers.forEach(w => rows.push([w.worker, w.taxNumber || '', w.role || '', w.grossPay, w.uifEmployee, w.uifEmployer, w.payeAmount]));
+  const csv = rows.map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
+  downloadBlob(new Blob([csv], { type: 'text/csv' }), `TaxYearSummary_${currentTaxYearSummary.taxYear.replace('/', '-')}.csv`);
+  toast('CSV downloaded ✓');
+}
+
 function renderPayrollHistory() {
+  const tysBtn = document.getElementById('payroll-tax-summary-btn');
+  if (tysBtn) tysBtn.style.display = getPayrollSettings().payeRegistered ? '' : 'none';
   const sorted = [...payrollRuns].sort((a, b) => b.periodStart.localeCompare(a.periodStart));
   const body = document.getElementById('payroll-history-body');
   if (body) {
