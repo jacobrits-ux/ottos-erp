@@ -429,6 +429,7 @@ select option{background:var(--surface2);}
       <div class="nav-label">Resources</div>
       <div class="nav-item" onclick="navigate('clients')"><span class="nav-icon">◉</span>Clients<span class="nav-badge" id="form-submissions-badge" style="display:none;background:var(--accent)">0</span></div>
       <div class="nav-item" onclick="navigate('crew')"><span class="nav-icon">◈</span>Crew &amp; Workers</div>
+      <div class="nav-item" onclick="navigate('contracts')" style="color:var(--blue)"><span class="nav-icon">📝</span>Contracts</div>
       <div class="nav-item" onclick="navigate('materials')"><span class="nav-icon">⬡</span>Materials</div>
     </div>
     <div class="nav-section">
@@ -691,6 +692,38 @@ select option{background:var(--surface2);}
         <div class="panel">
           <div class="table-scroll"><table class="data-table"><thead><tr><th>Name</th><th>Role</th><th>Phone</th><th>Rate/Day</th><th>Status</th><th>Assigned</th><th>Actions</th></tr></thead><tbody id="crew-body"></tbody></table></div>
           <div class="card-list" id="crew-cards"></div>
+        </div>
+      </div>
+
+      <!-- EMPLOYEE CONTRACTS -->
+      <div class="page" id="page-contracts">
+        <div style="background:linear-gradient(135deg,rgba(74,159,212,.1),rgba(74,159,212,.04));border:1px solid rgba(74,159,212,.3);padding:12px 16px;margin-bottom:14px;">
+          <div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--blue);text-transform:uppercase;margin-bottom:2px;">Employee Contracts</div>
+          <div style="font-size:12px;color:var(--text2)">Starting terms are seeded from BCEA minimums (notice period, annual leave) — review and adjust before signing. This is a record-keeping and signing tool, not a substitute for legal review of your contract wording.</div>
+        </div>
+
+        <div id="contract-detail-section" style="display:none;">
+          <div class="panel">
+            <div class="panel-header">
+              <button class="action-btn" onclick="backToContractsHistory()">← Back</button>
+              <span style="margin-left:10px;" id="contract-detail-header"></span>
+              <button id="contract-void-btn" class="action-btn danger" style="margin-left:auto;display:none;" onclick="showVoidContract(contractViewingId)">Void</button>
+            </div>
+            <div id="contract-detail-body" style="padding:14px;"></div>
+          </div>
+        </div>
+
+        <div id="contracts-history-section">
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">Contracts</span></div>
+            <div class="table-scroll">
+              <table class="data-table">
+                <thead><tr><th>Employee</th><th>Start Date</th><th>Pay</th><th>Status</th><th></th></tr></thead>
+                <tbody id="contracts-history-body"></tbody>
+              </table>
+            </div>
+            <div class="card-list" id="contracts-history-cards"></div>
+          </div>
         </div>
       </div>
 
@@ -1563,8 +1596,9 @@ select option{background:var(--surface2);}
 </div>
 <div class="toast" id="toast"></div>
 
-<script src="core.js?v=20260920074334"></script>
-<script src="ai-features.js?v=20260920074334"></script>
-<script src="payroll.js?v=20260920074334"></script>
+<script src="core.js?v=20260921031146"></script>
+<script src="ai-features.js?v=20260921031146"></script>
+<script src="payroll.js?v=20260921031146"></script>
+<script src="contracts.js?v=20260921031146"></script>
 </body>
 </html>
