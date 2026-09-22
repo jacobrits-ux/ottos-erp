@@ -205,139 +205,6 @@ let firebaseSaveTimer = null;
 let pendingFormSubmissions = [];         // in-memory, from Firebase clientForms
 const processedFormIds = new Set();     // prevents re-notifying same submission
 
-function initFirebase() {
-  const cfg = JSON.parse(localStorage.getItem('ottos_firebase_config') || 'null');
-  if (!cfg || !cfg.apiKey) { updateSyncIndicator('not-configured'); return; }
-  try {
-    if (!firebase.apps.length) firebase.initializeApp(cfg);
-    db = firebase.firestore();
-    db.enablePersistence({ synchronizeTabs: true }).catch(e => {
-      if (e.code === 'failed-precondition') console.warn('Multi-tab: persistence limited');
-    });
-
-    // ── Main store listener ──
-    db.collection('erp').doc('store').onSnapshot(doc => {
-      if (!doc.exists()) {
-        db.collection('erp').doc('store').set({ ...store, _ts: Date.now(), _dev: DEVICE_ID }).catch(() => {});
-        return;
-      }
-      const remote = doc.data();
-      const meta = doc.metadata;
-      if (meta.hasPendingWrites) return;
-      if (remote._dev && remote._dev !== DEVICE_ID) {
-        COLLECTIONS.forEach(k => { if (Array.isArray(remote[k])) store[k] = remote[k]; });
-        // payrollSettings is a bounded object, not an array — COLLECTIONS'
-        // Array.isArray guard above intentionally skips it, so merge it here.
-        if (remote.payrollSettings && typeof remote.payrollSettings === 'object') store.payrollSettings = remote.payrollSettings;
-        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(store)); } catch(e) {}
-        renderPage(currentPage);
-        updateSyncBadges();
-        toast('⟳ Live update from other device');
-      }
-      updateSyncIndicator(meta.fromCache ? 'offline' : 'synced');
-    }, err => { console.warn('Firestore listener:', err); updateSyncIndicator('offline'); });
-
-    // ── Client intake form submissions listener ──
-    db.collection('clientForms').onSnapshot(snapshot => {
-      snapshot.docChanges().forEach(change => {
-        const data = { id: change.doc.id, ...change.doc.data() };
-        if (data.status === 'submitted' && !data._imported && !processedFormIds.has(data.id)) {
-          processedFormIds.add(data.id);
-          // Remove existing record for same client if any, then prepend
-          pendingFormSubmissions = pendingFormSubmissions.filter(f => f.id !== data.id);
-          pendingFormSubmissions.unshift(data);
-          toast('📋 Form submitted by ' + (data.clientName || data.declName || 'client'));
-          updateFormBadge();
-          if (currentPage === 'clients') renderClients();
-        }
-      });
-    }, err => console.warn('ClientForms listener:', err));
-
-    // ── Client portal — quote approve/decline actions from clients ──
-    db.collection('clientPortal').onSnapshot(snapshot => {
-      snapshot.docChanges().forEach(change => {
-        if (change.type === 'removed') return;
-        const d = change.doc.data();
-        if (!d.actions) return;
-        try { applyPortalActions(change.doc.id, JSON.parse(d.actions)); } catch(e) { console.warn('Portal action parse error:', e); }
-      });
-    }, err => console.warn('ClientPortal listener:', err));
-
-    // ── Job Cards — own collection, not nested in erp/store (avoids 1MB single-doc ceiling) ──
-    db.collection('jobCards').onSnapshot(snapshot => {
-      let changed = false;
-      snapshot.docChanges().forEach(change => {
-        if (change.doc.metadata.hasPendingWrites) return; // skip our own optimistic write
-        const data = change.doc.data();
-        const idx = jobCards.findIndex(j => j.id === data.id);
-        if (change.type === 'removed') { if (idx !== -1) { jobCards.splice(idx,1); changed = true; } }
-        else { if (idx !== -1) jobCards[idx] = data; else jobCards.unshift(data); changed = true; }
-      });
-      if (changed) {
-        saveJobCardsLocal();
-        if (currentPage === 'jobcards') renderJobCards();
-        updateJobCardBadge();
-      }
-    }, err => console.warn('JobCards listener:', err));
-
-    // ── Variation Orders — own collection, remote portal approvals sync back here ──
-    db.collection('variationOrders').onSnapshot(snapshot => {
-      let changed = false;
-      snapshot.docChanges().forEach(change => {
-        if (change.doc.metadata.hasPendingWrites) return;
-        const data = change.doc.data();
-        const idx = variationOrders.findIndex(v => v.id === data.id);
-        const prevStatus = idx !== -1 ? variationOrders[idx].status : null;
-        if (change.type === 'removed') { if (idx !== -1) { variationOrders.splice(idx,1); changed = true; } }
-        else {
-          if (idx !== -1) variationOrders[idx] = data; else variationOrders.unshift(data);
-          changed = true;
-          if (prevStatus === 'pending' && (data.status === 'approved' || data.status === 'declined')) {
-            toast(`🔔 Client ${data.status} variation ${data.id}`);
-            store.activity.unshift({ text: `Variation ${data.id} ${data.status} by client via Client Portal`, time: 'Just now', type: data.status === 'approved' ? 'green' : 'red' });
-            save();
-          }
-        }
-      });
-      if (changed) {
-        saveVariationOrdersLocal();
-        if (currentPage === 'jobcards') renderJobCards();
-      }
-    }, err => console.warn('VariationOrders listener:', err));
-
-    // ── Payroll Runs — own collection, not nested in erp/store. Same
-    // reasoning as Job Cards/Variation Orders above: weekly wage records
-    // with UIF/PAYE detail accumulate indefinitely, and erp/store is a
-    // single shared, whole-blob-synced document capped at 1MB by Firestore.
-    // Guarded with typeof checks because this listener is registered here
-    // in core.js (called from the bootstrap at the bottom of this file,
-    // before payroll.js has loaded) but payrollRuns/updatePayrollBadge are
-    // declared in payroll.js. Safe in practice — onSnapshot only invokes
-    // this callback asynchronously, well after payroll.js has finished
-    // loading — but the guard keeps a future script-order change from
-    // throwing instead of just skipping a redundant sync tick.
-    db.collection('payrollRuns').onSnapshot(snapshot => {
-      if (typeof payrollRuns === 'undefined') return;
-      let changed = false;
-      snapshot.docChanges().forEach(change => {
-        if (change.doc.metadata.hasPendingWrites) return;
-        const data = change.doc.data();
-        const idx = payrollRuns.findIndex(r => r.id === data.id);
-        if (change.type === 'removed') { if (idx !== -1) { payrollRuns.splice(idx,1); changed = true; } }
-        else { if (idx !== -1) payrollRuns[idx] = data; else payrollRuns.unshift(data); changed = true; }
-      });
-      if (changed) {
-        savePayrollRunsLocal();
-        if (currentPage === 'payroll') renderPayrollPage();
-        if (typeof updatePayrollBadge === 'function') updatePayrollBadge();
-      }
-    }, err => console.warn('PayrollRuns listener:', err));
-
-    syncEnabled = true;
-    updateSyncIndicator('synced');
-  } catch(err) { console.warn('Firebase init error:', err); updateSyncIndicator('offline'); }
-}
-
 function updateSyncIndicator(state) {
   const el = document.getElementById('sync-indicator');
   if (!el) return;
@@ -361,6 +228,7 @@ function updateSyncBadges() {
 
 function showFirebaseSetup() {
   const saved = JSON.parse(localStorage.getItem('ottos_firebase_config') || 'null') || {};
+  const authUser = (typeof currentAuthUser !== 'undefined' && currentAuthUser) ? currentAuthUser : null;
   openModal('⚡ FIREBASE SYNC SETUP', `
     <div style="background:rgba(74,159,212,.08);border:1px solid rgba(74,159,212,.25);padding:12px 14px;margin-bottom:14px;">
       <div style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--blue);text-transform:uppercase;margin-bottom:6px;">Setup (5 min, free)</div>
@@ -386,14 +254,42 @@ function showFirebaseSetup() {
       ${saved.apiKey ? `<button class="topbar-btn secondary" onclick="disableFirebaseSync()">DISABLE</button>` : ''}
       <button class="topbar-btn secondary" onclick="closeModalDirect()">CANCEL</button>
     </div>
+
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);">
+      <div style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--accent);text-transform:uppercase;margin-bottom:8px;">Require Sign-In (Firebase Auth)</div>
+      <div style="background:rgba(224,82,82,.06);border:1px solid rgba(224,82,82,.2);padding:10px 12px;font-size:11px;color:var(--text2);line-height:1.8;margin-bottom:10px;">
+        Do these two things in Firebase Console <b>first</b>, or ticking the box below will lock you out with no way back in:<br>
+        1 → Authentication → Sign-in method → enable <b>Email/Password</b><br>
+        2 → Authentication → Users → Add user → create an account for yourself (and anyone else who needs access)
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;text-transform:none;font-family:var(--fb);margin-bottom:10px;"><input type="checkbox" id="fb-auth-enabled" ${saved.authEnabled ? 'checked' : ''} style="width:auto;"> Require sign-in to use this app (once accounts exist above)</label>
+      ${authUser ? `<div style="font-family:var(--fm);font-size:11px;color:var(--green);margin-bottom:6px;">Signed in as ${authUser.email}</div><button class="action-btn" onclick="signOutUser()">Sign Out</button>` : ''}
+    </div>
+
     <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
       <div style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--text3);margin-bottom:6px;">FIRESTORE SECURITY RULES — paste in Firebase Console → Firestore → Rules</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:8px;">Internal data requires sign-in once the box above is checked. clientForms/clientPortal use Firestore's REST API directly (not this SDK) with no auth of their own — get/update stay open so intake-form autosave and portal approve/decline keep working anonymously, while list/create/delete require sign-in so no one can browse or tamper with other clients' data.</div>
       <div style="background:var(--bg);border:1px solid var(--border);padding:10px;font-family:var(--fm);font-size:10px;color:var(--text2);line-height:1.8;white-space:pre-wrap;">rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /erp/{document}        { allow read, write: if true; }
-    match /clientForms/{document}{ allow read, write: if true; }
-    match /clientPortal/{document}{ allow read, write: if true; }
+    match /erp/{document}               { allow read, write: if request.auth != null; }
+    match /jobCards/{document}          { allow read, write: if request.auth != null; }
+    match /variationOrders/{document}   { allow read, write: if request.auth != null; }
+    match /payrollRuns/{document}       { allow read, write: if request.auth != null; }
+    match /employeeContracts/{document} { allow read, write: if request.auth != null; }
+
+    match /clientForms/{document} {
+      allow get: if true;
+      allow list: if request.auth != null;
+      allow create, update: if true;
+      allow delete: if request.auth != null;
+    }
+    match /clientPortal/{document} {
+      allow get: if true;
+      allow list: if request.auth != null;
+      allow update: if true;
+      allow create, delete: if request.auth != null;
+    }
   }
 }</div>
     </div>
@@ -406,9 +302,10 @@ function saveFirebaseConfig() {
   const authDomain = (document.getElementById('fb-authdomain')?.value||'').trim();
   const projectId  = (document.getElementById('fb-projectid')?.value||'').trim();
   const netlifyUrl = (document.getElementById('fb-netlifyurl')?.value||'').trim().replace(/\/$/, '');
+  const authEnabled = document.getElementById('fb-auth-enabled')?.checked || false;
   const msg = document.getElementById('fb-status-msg');
   if (!apiKey || !projectId) { if(msg){msg.style.color='var(--red)';msg.textContent='⚠ API Key and Project ID required';} return; }
-  localStorage.setItem('ottos_firebase_config', JSON.stringify({ apiKey, authDomain, projectId, netlifyUrl }));
+  localStorage.setItem('ottos_firebase_config', JSON.stringify({ apiKey, authDomain, projectId, netlifyUrl, authEnabled }));
   if(msg){msg.style.color='var(--green)';msg.textContent='✓ Saved — reloading to activate…';}
   setTimeout(() => { closeModalDirect(); location.reload(); }, 1400);
 }
@@ -4886,6 +4783,11 @@ if (_formToken && _formPid) {
 } else {
   // Normal ERP mode
   renderDashboard();
-  initFirebase(); // start Firebase sync + clientForms listener
+  // initFirebase() is triggered from the tail of sync.js (loaded LAST, after
+  // core/ai-features/payroll/contracts) rather than here — it needs every
+  // other file's globals (payrollRuns, employeeContracts, renderPayrollPage,
+  // etc.) to already exist before its Firestore listeners can safely be
+  // wired up, and this bootstrap block runs synchronously at the bottom of
+  // core.js, before any of those files have even loaded yet.
 }
 

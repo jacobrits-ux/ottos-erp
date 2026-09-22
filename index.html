@@ -363,8 +363,27 @@ select option{background:var(--surface2);}
 <!-- Firebase SDK — real-time multi-device sync -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 </head>
 <body>
+
+<!-- LOGIN OVERLAY — hidden by default; shown only when Payroll Settings-
+     style opt-in (Sync Setup's authEnabled) is on and no user is signed
+     in. Never shown at all for anyone not using Firebase sync, or using
+     it without Auth turned on. -->
+<div id="login-overlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:9999;align-items:center;justify-content:center;padding:20px;">
+  <div style="max-width:340px;width:100%;">
+    <div style="text-align:center;margin-bottom:30px;">
+      <div style="font-family:var(--fd);font-size:32px;color:var(--accent);letter-spacing:2px;">OTTO'S ERP</div>
+      <div style="font-family:var(--fm);font-size:10px;color:var(--text3);letter-spacing:2px;margin-top:4px;">SIGN IN TO CONTINUE</div>
+    </div>
+    <div class="form-group"><label>Email</label><input type="email" id="login-email" autocomplete="username"></div>
+    <div class="form-group"><label>Password</label><input type="password" id="login-password" autocomplete="current-password" onkeydown="if(event.key==='Enter')attemptSignIn()"></div>
+    <div id="login-error" style="color:var(--red);font-size:12px;margin:8px 0;min-height:16px;"></div>
+    <button class="topbar-btn" style="width:100%;" onclick="attemptSignIn()">SIGN IN</button>
+    <div style="font-family:var(--fm);font-size:10px;color:var(--text3);margin-top:20px;text-align:center;line-height:1.7;">No account? Ask whoever manages this system to create one for you in Firebase Console.</div>
+  </div>
+</div>
 
 <div class="topbar">
   <button class="menu-btn" onclick="toggleSidebar()">☰</button>
@@ -442,6 +461,7 @@ select option{background:var(--surface2);}
       <div class="nav-item" onclick="backupData()" style="color:var(--text3)"><span class="nav-icon">⬇</span>Backup Data</div>
       <div class="nav-item" onclick="restoreData()" style="color:var(--text3)"><span class="nav-icon">⬆</span>Restore Data</div>
       <div class="nav-item" onclick="showFirebaseSetup()" style="color:var(--blue)"><span class="nav-icon">⚡</span>Sync Setup</div>
+      <div id="auth-status-line" style="padding:2px 16px 8px 38px;font-family:var(--fm);font-size:9px;color:var(--text3);"></div>
       <div class="nav-item" onclick="showAISetup()" style="color:var(--purple)"><span class="nav-icon">🤖</span>AI Setup</div>
     </div>
   </nav>
@@ -1596,9 +1616,10 @@ select option{background:var(--surface2);}
 </div>
 <div class="toast" id="toast"></div>
 
-<script src="core.js?v=20260921031146"></script>
-<script src="ai-features.js?v=20260921031146"></script>
-<script src="payroll.js?v=20260921031146"></script>
-<script src="contracts.js?v=20260921031146"></script>
+<script src="core.js?v=20260922001346"></script>
+<script src="ai-features.js?v=20260922001346"></script>
+<script src="payroll.js?v=20260922001346"></script>
+<script src="contracts.js?v=20260922001346"></script>
+<script src="sync.js?v=20260922001346"></script>
 </body>
 </html>
