@@ -123,6 +123,18 @@ body{background:var(--bg);color:var(--text);font-family:var(--fb);font-size:14px
 .form-group.full{grid-column:1/-1;}
 label{font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;}
 input,select,textarea{background:var(--bg);border:1px solid var(--border);color:var(--text);padding:9px 10px;font-family:var(--fb);font-size:14px;outline:none;transition:border-color .15s;width:100%;border-radius:0;-webkit-appearance:none;}
+/* The rule above strips ALL native input styling, including a checkbox's
+   own checked-state rendering — accent-color has no effect once appearance
+   is none, since there's no native widget left for it to tint. Restoring
+   native appearance for checkboxes/radios specifically (as .cf-decl's own
+   checkbox rule already did in isolation) fixes every checkbox app-wide in
+   one place, rather than requiring every future checkbox to remember this
+   individually — found while several new toggle checkboxes (Payroll
+   Settings, Crew UIF/PAYE, Sync Setup's sign-in requirement) turned out
+   invisible-when-checked; the same rule also explains why Job Cards' combine
+   checkbox and the AI Scanner's item-selection checkboxes never visibly
+   showed a checkmark either. */
+input[type="checkbox"],input[type="radio"]{-webkit-appearance:checkbox;appearance:checkbox;width:auto;accent-color:var(--accent);}
 input:focus,select:focus,textarea:focus{border-color:var(--accent);}
 textarea{resize:vertical;min-height:70px;}
 select option{background:var(--surface2);}
