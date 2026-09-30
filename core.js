@@ -80,6 +80,7 @@ function saveStore(data) {
   }
   // Debounced Firebase write — batches rapid changes, 500ms delay
   if (syncEnabled && db) {
+    if (!storePullDone) { storePushBlocked = true; return; }
     clearTimeout(firebaseSaveTimer);
     updateSyncIndicator('syncing');
     firebaseSaveTimer = setTimeout(() => {
@@ -97,6 +98,10 @@ function saveStore(data) {
 // ══════════════════════════════════════════════════════
 let db = null;
 let syncEnabled = false;
+// Whole-store writes are last-writer-wins, so a device must pull once before it may push, or a
+// fresh/stale device overwrites the shared store with its own empty copy (opened in sync.js).
+let storePullDone = false;
+let storePushBlocked = false;
 
 // Plain object store — call save() after every mutation
 const store = loadStore();

@@ -62,20 +62,47 @@ function initFirebase() {
 // onIdTokenChanged), so this shouldn't normally re-fire while already
 // signed in, but the guard costs nothing and keeps a future change safe.
 let firestoreListenersInitialized = false;
+
+// Opens the push gate on the first SERVER-confirmed snapshot of erp/store (never a cache-only one,
+// which can be stale or empty). Until then saveStore() still writes locally but does not push.
+function openStorePullGate(remoteReplacedLocal) {
+  if (storePullDone) return;
+  storePullDone = true;
+  if (!storePushBlocked) return;
+  storePushBlocked = false;
+  if (remoteReplacedLocal) {
+    // Last-writer-wins: the other device's newer copy just replaced ours, including anything saved
+    // while the gate was closed. Say so instead of letting it vanish silently.
+    toast('⚠ Sync: edits made before first sync were replaced by newer data from the other device');
+  } else {
+    saveStore(store); // our own write is the newest remote state, so what we saved while gated is safe to push
+  }
+}
+
 function setupFirestoreListeners() {
   if (firestoreListenersInitialized) return;
   firestoreListenersInitialized = true;
 
     // ── Main store listener ──
     db.collection('erp').doc('store').onSnapshot(doc => {
-      if (!doc.exists()) {
+      // `exists` is a boolean PROPERTY in the compat SDK that index.html loads (a method only in
+      // the modular SDK). Calling it as a method threw a TypeError on every existing document, so
+      // no device ever pulled the shared store — only the device that wrote it had any data.
+      const docExists = typeof doc.exists === 'function' ? doc.exists() : doc.exists;
+      const meta = doc.metadata;
+      if (!docExists) {
+        // A cache-only "missing" doesn't prove the server has nothing (offline first run);
+        // creating the document from here could overwrite real data on reconnect.
+        if (meta.fromCache) return;
         db.collection('erp').doc('store').set({ ...store, _ts: Date.now(), _dev: DEVICE_ID }).catch(() => {});
+        openStorePullGate(false);
         return;
       }
       const remote = doc.data();
-      const meta = doc.metadata;
       if (meta.hasPendingWrites) return;
+      let remoteReplacedLocal = false;
       if (remote._dev && remote._dev !== DEVICE_ID) {
+        remoteReplacedLocal = true;
         COLLECTIONS.forEach(k => { if (Array.isArray(remote[k])) store[k] = remote[k]; });
         // payrollSettings is a bounded object, not an array — COLLECTIONS'
         // Array.isArray guard above intentionally skips it, so merge it here.
@@ -85,6 +112,7 @@ function setupFirestoreListeners() {
         updateSyncBadges();
         toast('⟳ Live update from other device');
       }
+      if (!meta.fromCache) openStorePullGate(remoteReplacedLocal);
       updateSyncIndicator(meta.fromCache ? 'offline' : 'synced');
     }, err => { console.warn('Firestore listener:', err); updateSyncIndicator('offline'); });
 
