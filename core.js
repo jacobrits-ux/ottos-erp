@@ -1190,7 +1190,7 @@ function renderCrewCards() {
       <div class="card-item-row"><span style="color:var(--text3)">Rate</span><span style="font-family:var(--fm);color:var(--accent)">${fmt(c.rate)}/day</span></div>
       <div class="card-item-row"><span style="color:var(--text3)">Project</span>${c.project!=='-'?`<span class="badge badge-blue">${c.project}</span>`:'<span style="color:var(--text3)">—</span>'}</div>
       <div class="card-item-actions">
-        <button class="action-btn" onclick="editCrew(${i})">Edit</button>
+        ${window.obBtn?obBtn(c):''}<button class="action-btn" onclick="editCrew(${i})">Edit</button>
         <button class="action-btn danger" onclick="deleteItem('crew',${i})">Delete</button>
       </div>
     </div>`).join('');
@@ -1630,7 +1630,7 @@ function renderCrew() {
       <td style="font-family:var(--fm);color:var(--accent)">${fmt(c.rate)}/day</td>
       <td>${statusBadge(c.status)}</td>
       <td>${c.project!=='-'?`<span class="badge badge-blue">${c.project}</span>`:'<span class="mono">—</span>'}</td>
-      <td><button class="action-btn" onclick="editCrew(${i})">Edit</button> <button class="action-btn danger" onclick="deleteItem('crew',${i})">Del</button></td>
+      <td>${window.obBtn?obBtn(c):''}<button class="action-btn" onclick="editCrew(${i})">Edit</button> <button class="action-btn danger" onclick="deleteItem('crew',${i})">Del</button></td>
     </tr>`).join('');
   renderCrewCards();
 }
