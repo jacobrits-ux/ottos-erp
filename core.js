@@ -323,13 +323,31 @@ function disableFirebaseSync() {
 // ── CLIENT INTAKE FORM ──
 // ══════════════════════════════════════════════════════
 
+// Unguessable form/document ID (96 bits of randomness). Client form links used to use the
+// sequential client ID (CLT-001, CLT-002...) as the Firestore document ID, and the public form page
+// reads its document anonymously — so anyone could enumerate every client's intake data by counting.
+// The client ID still lives INSIDE the document (clientId field), which is what import matches on.
+function genFormToken(prefix) {
+  let hex = '';
+  if (window.crypto && crypto.getRandomValues) {
+    const b = new Uint8Array(12); crypto.getRandomValues(b);
+    hex = Array.from(b, x => x.toString(16).padStart(2, '0')).join('');
+  } else {
+    for (let i = 0; i < 24; i++) hex += Math.floor(Math.random() * 16).toString(16);
+  }
+  return prefix + hex;
+}
+
+// A NEW token on every call: re-sending a form never overwrites an earlier record (previously
+// doc(clientId).set() could reset an already-submitted form back to 'pending').
 function getFormUrl(clientId) {
   const cfg = JSON.parse(localStorage.getItem('ottos_firebase_config') || 'null') || {};
   const base = (cfg.netlifyUrl || '').trim().replace(/\/$/, '');
   const pid  = cfg.projectId || '';
   if (!base || !pid) return null;
+  const token = genFormToken('FT-');
   // Form is embedded in the ERP itself — same file, different URL params
-  return `${base}/index.html?form=${clientId}&pid=${pid}`;
+  return { url: `${base}/index.html?form=${token}&pid=${pid}`, token };
 }
 
 // Additional-property form link — a UNIQUE token per submission (never reused per client), so sending
@@ -339,7 +357,7 @@ function getPropertyFormUrl(clientId) {
   const base = (cfg.netlifyUrl || '').trim().replace(/\/$/, '');
   const pid  = cfg.projectId || '';
   if (!base || !pid) return null;
-  const propToken = clientId + '-prop-' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+  const propToken = genFormToken('FP-');
   return { url: `${base}/index.html?form=${propToken}&pid=${pid}&mode=property`, token: propToken };
 }
 
@@ -639,8 +657,9 @@ function maybePromptNotifyClient(type, i) {
 }
 
 function showFormShareModal(clientId, clientName, phone, email, clientType, autoChannel) {
-  const formUrl = getFormUrl(clientId);
-  if (!formUrl) {
+  const formInfo = getFormUrl(clientId);
+  const formUrl  = formInfo && formInfo.url;
+  if (!formInfo) {
     openModal('📋 SEND CLIENT INTAKE FORM', `
       <div style="background:rgba(232,160,32,.08);border:1px solid rgba(232,160,32,.25);padding:14px;margin-bottom:14px;">
         <div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--accent);margin-bottom:6px;">⚠ SETUP REQUIRED FIRST</div>
@@ -656,7 +675,7 @@ function showFormShareModal(clientId, clientName, phone, email, clientType, auto
 
   // Write the pending form record to Firebase
   if (db) {
-    db.collection('clientForms').doc(clientId).set({
+    db.collection('clientForms').doc(formInfo.token).set({
       clientId, clientName, clientPhone: phone||'', clientEmail: email||'', clientType: clientType||'',
       status: 'pending', createdAt: new Date().toISOString(), sentAt: new Date().toISOString(),
       _dev: DEVICE_ID
@@ -3423,7 +3442,7 @@ async function cfInitMode(token, pid, mode) {
       if (data.clientType) cfSetType(data.clientType);
     }
     cfSet('cf-declDate',   new Date().toISOString().split('T')[0]);
-    cfSet('cf-declRef',    token);
+    cfSet('cf-declRef',    data.clientId || token);
     document.getElementById('cf-scr-loading').classList.remove('active');
     document.getElementById('cf-hdr').style.display  = '';
     document.getElementById('cf-body').style.display = '';
