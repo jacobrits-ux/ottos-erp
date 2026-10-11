@@ -172,18 +172,30 @@ let firestoreListenersInitialized = false;
 
 // Opens the push gate on the first SERVER-confirmed snapshot of erp/store (never a cache-only one,
 // which can be stale or empty). Until then saveStore() still writes locally but does not push.
-function openStorePullGate(remoteReplacedLocal) {
+let lastMergedRemoteSig = null;   // last remote version merged into this device (see the store listener)
+let storeEditsReplaced = false;  // edits saved while gated were overwritten by a remote merge
+
+// True when this device (the last writer) holds edits the server never received. Guarded: if the local copy
+// has FEWER records than the server's it might be a reset or corrupted local store, and pushing it would
+// wipe real shared data — so that case waits for an explicit save instead of pushing automatically.
+function storeHasUnpushedEdits(remote) {
+  const j = v => JSON.stringify(v == null ? null : v);
+  const count = o => COLLECTIONS.reduce((n, k) => n + (Array.isArray(o[k]) ? o[k].length : 0), 0);
+  const differs = COLLECTIONS.some(k => j(store[k] || []) !== j(remote[k] || [])) || j(store.payrollSettings) !== j(remote.payrollSettings);
+  return differs && count(store) >= count(remote);
+}
+
+function openStorePullGate() {
   if (storePullDone) return;
   storePullDone = true;
-  if (!storePushBlocked) return;
-  storePushBlocked = false;
-  if (remoteReplacedLocal) {
-    // Last-writer-wins: the other device's newer copy just replaced ours, including anything saved
-    // while the gate was closed. Say so instead of letting it vanish silently.
+  if (storeEditsReplaced) {
+    storeEditsReplaced = false;
+    // Last-writer-wins: the other device's newer copy replaced what was saved while the gate was closed.
+    // Say so instead of letting it vanish silently.
     toast('⚠ Sync: edits made before first sync were replaced by newer data from the other device');
-  } else {
-    saveStore(store); // our own write is the newest remote state, so what we saved while gated is safe to push
   }
+  // Whatever is still blocked was saved AFTER the last merge (or none happened), so it is the newest copy.
+  if (storePushBlocked) { storePushBlocked = false; saveStore(store); }
 }
 
 function setupFirestoreListeners() {
@@ -191,7 +203,12 @@ function setupFirestoreListeners() {
   firestoreListenersInitialized = true;
 
     // ── Main store listener ──
-    db.collection('erp').doc('store').onSnapshot(doc => {
+    // includeMetadataChanges is REQUIRED for the badge and the push gate. With the default, when the
+    // phone's cached copy already equals the server's, the listener fires ONCE (fromCache: true) and the
+    // later "server confirmed" step is a metadata-only change that is never delivered: the badge stuck
+    // on OFFLINE and the gate (which opens only on a server-confirmed snapshot) never opened, so nothing
+    // this phone saved was pushed. (Firestore SDK: QueryListener.shouldRaiseEvent.)
+    db.collection('erp').doc('store').onSnapshot({ includeMetadataChanges: true }, doc => {
       // `exists` is a boolean PROPERTY in the compat SDK that index.html loads (a method only in
       // the modular SDK). Calling it as a method threw a TypeError on every existing document, so
       // no device ever pulled the shared store — only the device that wrote it had any data.
@@ -202,15 +219,19 @@ function setupFirestoreListeners() {
         // creating the document from here could overwrite real data on reconnect.
         if (meta.fromCache) return;
         db.collection('erp').doc('store').set({ ...store, _ts: Date.now(), _dev: DEVICE_ID }).catch(() => {});
-        openStorePullGate(false);
+        openStorePullGate();
         return;
       }
       const remote = doc.data();
       syncDiag.store = { at: Date.now(), fromCache: meta.fromCache, pending: meta.hasPendingWrites };
       if (meta.hasPendingWrites) return;
-      let remoteReplacedLocal = false;
-      if (remote._dev && remote._dev !== DEVICE_ID) {
-        remoteReplacedLocal = true;
+      // includeMetadataChanges re-delivers the SAME remote data when the server confirms a cache-only
+      // snapshot; merge (and toast) each distinct remote version once.
+      const remoteSig = String(remote._ts) + ':' + remote._dev;
+      if (remote._dev && remote._dev !== DEVICE_ID && remoteSig !== lastMergedRemoteSig) {
+        lastMergedRemoteSig = remoteSig;
+        // Anything saved while the push gate was closed is about to be overwritten by this merge.
+        if (storePushBlocked) { storePushBlocked = false; storeEditsReplaced = true; }
         COLLECTIONS.forEach(k => { if (Array.isArray(remote[k])) store[k] = remote[k]; });
         // payrollSettings is a bounded object, not an array — COLLECTIONS'
         // Array.isArray guard above intentionally skips it, so merge it here.
@@ -220,7 +241,12 @@ function setupFirestoreListeners() {
         updateSyncBadges();
         toast('⟳ Live update from other device');
       }
-      if (!meta.fromCache) openStorePullGate(remoteReplacedLocal);
+      if (!meta.fromCache) {
+        // Our own device wrote last, so a local copy that differs from the server's holds edits that were
+        // never pushed (e.g. saved while the gate was closed in an earlier session): push them.
+        if (!storePullDone && remote._dev === DEVICE_ID && storeHasUnpushedEdits(remote)) storePushBlocked = true;
+        openStorePullGate();
+      }
       updateSyncIndicator(meta.fromCache ? 'offline' : 'synced');
     }, err => { console.warn('Firestore listener:', err); syncDiagError('erp/store', err); updateSyncIndicator('offline'); });
 
