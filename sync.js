@@ -29,6 +29,7 @@ function initFirebase() {
     if (!firebase.apps.length) firebase.initializeApp(cfg);
     db = firebase.firestore();
     db.enablePersistence({ synchronizeTabs: true }).catch(e => {
+      syncDiag.persistence = e.code || String(e);
       if (e.code === 'failed-precondition') console.warn('Multi-tab: persistence limited');
     });
 
@@ -61,6 +62,112 @@ function initFirebase() {
 // real sign-in/sign-out transitions (not token refreshes, that's
 // onIdTokenChanged), so this shouldn't normally re-fire while already
 // signed in, but the guard costs nothing and keeps a future change safe.
+// ── Sync diagnostics ─────────────────────────────────────────────────────────
+// The OFFLINE badge says nothing about WHY. This records what the listeners last reported and
+// powers the TEST SYNC button in Sync Setup, which probes each layer separately — browser
+// online flag, sign-in token refresh, a server read through the SDK, and raw REST reachability —
+// each with its own timeout so one hung layer cannot hide the others. Read-only: it never
+// writes to Firestore.
+const syncDiag = { store: null, errors: {}, persistence: null };
+
+function syncDiagError(where, err) {
+  syncDiag.errors[where] = {
+    code: (err && err.code) || 'unknown',
+    message: String((err && err.message) || err).slice(0, 160),
+    at: Date.now(),
+  };
+}
+
+function syncWithTimeout(promise, ms) {
+  let timer;
+  const clock = new Promise((_, rej) => {
+    timer = setTimeout(() => rej({ code: 'timeout', message: 'no answer after ' + (ms / 1000) + 's' }), ms);
+  });
+  return Promise.race([promise, clock]).then(
+    v => { clearTimeout(timer); return v; },
+    e => { clearTimeout(timer); throw e; });
+}
+
+function syncEsc(v) {
+  return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// Each row: {label, ok, detail}. ok is true / false / null (null = informational).
+async function syncProbe(timeoutMs) {
+  const ms = timeoutMs || 12000;
+  const rows = [];
+  const add = (label, ok, detail) => rows.push({ label, ok, detail });
+  const cfg = JSON.parse(localStorage.getItem('ottos_firebase_config') || 'null') || {};
+  const fail = e => (e && e.code ? e.code + (e.message && e.code === 'timeout' ? ' (' + e.message + ')' : '') : String((e && e.message) || e));
+
+  add('Browser says online', navigator.onLine ? true : false, navigator.onLine ? 'yes' : 'NO — the phone reports no connection');
+  add('Phone date/time', null, new Date().toString());
+  add('Sync configured', !!(cfg.apiKey && cfg.projectId), cfg.projectId ? 'project ' + cfg.projectId : 'no project saved');
+
+  let user = null;
+  try { user = (typeof firebase !== 'undefined' && firebase.auth && firebase.apps.length) ? firebase.auth().currentUser : null; } catch (e) { user = null; }
+  if (cfg.authEnabled) {
+    add('Signed in', !!user, user ? user.email : 'NOT signed in');
+    if (user) {
+      try { await syncWithTimeout(user.getIdToken(true), ms); add('Sign-in token refresh', true, 'ok'); }
+      catch (e) { add('Sign-in token refresh', false, fail(e)); }
+    }
+  }
+
+  if (typeof db !== 'undefined' && db) {
+    try {
+      const snap = await syncWithTimeout(db.collection('erp').doc('store').get({ source: 'server' }), ms);
+      const exists = typeof snap.exists === 'function' ? snap.exists() : snap.exists;
+      add('Server read via the app connection', true, exists ? 'ok — shared data found' : 'ok — no shared data yet');
+    } catch (e) { add('Server read via the app connection', false, fail(e)); }
+  } else {
+    add('Server read via the app connection', false, 'sync is not running (no database object)');
+  }
+
+  if (cfg.projectId) {
+    try {
+      const r = await syncWithTimeout(fetch('https://firestore.googleapis.com/v1/projects/' + encodeURIComponent(cfg.projectId) + '/databases/(default)/documents/clientForms/sync-probe'), ms);
+      add('Firebase reachable (plain web request)', r.status === 404 || r.status === 403 || r.status === 200, 'HTTP ' + r.status + (r.status === 403 ? ' (reachable; the rules refuse anonymous reads)' : r.status === 404 ? ' (reachable)' : ''));
+    } catch (e) { add('Firebase reachable (plain web request)', false, fail(e)); }
+  }
+
+  const s = syncDiag.store;
+  add('Last shared-data message', null, s ? (s.fromCache ? 'from the phone\'s own copy only' : 'from the server') + ', ' + Math.round((Date.now() - s.at) / 1000) + 's ago' : 'none received since the app opened');
+  const errs = Object.keys(syncDiag.errors);
+  add('Errors the live connections reported', errs.length ? false : null, errs.length ? errs.map(k => k + ': ' + syncDiag.errors[k].code).join(', ') : 'none');
+  if (syncDiag.persistence) add('Local copy storage', false, syncDiag.persistence);
+  return rows;
+}
+
+// One plain-English conclusion from the rows, most specific cause first.
+function syncVerdict(rows) {
+  const by = l => rows.find(r => r.label === l);
+  const rest = by('Firebase reachable (plain web request)'), srv = by('Server read via the app connection'), tok = by('Sign-in token refresh');
+  const signed = by('Signed in'), online = by('Browser says online');
+  if (online && online.ok === false) return 'The phone reports it is offline. Check Wi-Fi and mobile data first.';
+  if (by('Sync configured') && by('Sync configured').ok === false) return 'Sync is not set up on this device. Open Sync Setup and activate it.';
+  if (signed && signed.ok === false) return 'The app is not signed in. Sign in again from Sync Setup.';
+  if (tok && tok.ok === false) return 'The sign-in token cannot be refreshed (' + tok.detail + '). Sign out and sign in again; if that fails, check the phone\'s date and time are automatic.';
+  if (srv && srv.ok === false && /permission-denied/.test(srv.detail)) return 'Firebase refused the read: the published security rules do not let this login in.';
+  if (srv && srv.ok === false && /unauthenticated/.test(srv.detail)) return 'Firebase did not accept the sign-in. Sign out and in again.';
+  if (srv && srv.ok === false && rest && rest.ok) return 'Firebase is reachable with a plain web request, but the app\'s live connection fails (' + srv.detail + '). Something on this phone or network is blocking the streaming connection (browser data saver, ad or DNS filter, VPN) or the browser\'s stored copy is damaged.';
+  if (srv && srv.ok === false && rest && rest.ok === false) return 'Firebase cannot be reached at all (' + rest.detail + '). Network problem, or a filter is blocking Google services.';
+  if (srv && srv.ok === false) return 'The server read failed (' + srv.detail + ').';
+  return 'Everything checks out right now. Close all ERP tabs, reopen the app in one tab, and watch the badge.';
+}
+
+async function runSyncTest() {
+  openModal('SYNC TEST', '<div style="padding:8px 0;color:var(--text3);font-size:12px">Testing each layer… this can take up to a minute.</div>');
+  let rows;
+  try { rows = await syncProbe(); }
+  catch (e) { openModal('SYNC TEST', '<div style="color:var(--red);font-size:12px">The test itself failed: ' + syncEsc((e && e.message) || e) + '</div>'); return; }
+  const mark = r => r.ok === true ? '<span style="color:var(--green)">✓</span>' : r.ok === false ? '<span style="color:var(--red)">✗</span>' : '<span style="color:var(--text3)">•</span>';
+  openModal('SYNC TEST', '<div style="font-size:12px;line-height:1.7">' +
+    rows.map(r => mark(r) + ' <b>' + syncEsc(r.label) + '</b><br><span style="color:var(--text3);margin-left:16px;display:inline-block">' + syncEsc(r.detail) + '</span>').join('<br>') +
+    '</div><div style="margin-top:12px;padding:10px;border:1px solid var(--border);font-size:12px;line-height:1.6"><b>Conclusion:</b> ' + syncEsc(syncVerdict(rows)) + '</div>' +
+    '<div class="form-actions"><button class="topbar-btn" onclick="runSyncTest()">RUN AGAIN</button><button class="topbar-btn secondary" onclick="closeModalDirect()">CLOSE</button></div>');
+}
+
 let firestoreListenersInitialized = false;
 
 // Opens the push gate on the first SERVER-confirmed snapshot of erp/store (never a cache-only one,
@@ -99,6 +206,7 @@ function setupFirestoreListeners() {
         return;
       }
       const remote = doc.data();
+      syncDiag.store = { at: Date.now(), fromCache: meta.fromCache, pending: meta.hasPendingWrites };
       if (meta.hasPendingWrites) return;
       let remoteReplacedLocal = false;
       if (remote._dev && remote._dev !== DEVICE_ID) {
@@ -114,7 +222,7 @@ function setupFirestoreListeners() {
       }
       if (!meta.fromCache) openStorePullGate(remoteReplacedLocal);
       updateSyncIndicator(meta.fromCache ? 'offline' : 'synced');
-    }, err => { console.warn('Firestore listener:', err); updateSyncIndicator('offline'); });
+    }, err => { console.warn('Firestore listener:', err); syncDiagError('erp/store', err); updateSyncIndicator('offline'); });
 
     // ── Client intake form submissions listener ──
     db.collection('clientForms').onSnapshot(snapshot => {
@@ -130,7 +238,7 @@ function setupFirestoreListeners() {
           if (currentPage === 'clients') renderClients();
         }
       });
-    }, err => console.warn('ClientForms listener:', err));
+    }, err => { console.warn('ClientForms listener:', err); syncDiagError('clientForms', err); });
 
     // ── Client portal — quote approve/decline actions from clients ──
     db.collection('clientPortal').onSnapshot(snapshot => {
@@ -140,7 +248,7 @@ function setupFirestoreListeners() {
         if (!d.actions) return;
         try { applyPortalActions(change.doc.id, JSON.parse(d.actions)); } catch(e) { console.warn('Portal action parse error:', e); }
       });
-    }, err => console.warn('ClientPortal listener:', err));
+    }, err => { console.warn('ClientPortal listener:', err); syncDiagError('clientPortal', err); });
 
     // ── Job Cards — own collection, not nested in erp/store (avoids 1MB single-doc ceiling) ──
     db.collection('jobCards').onSnapshot(snapshot => {
@@ -157,7 +265,7 @@ function setupFirestoreListeners() {
         if (currentPage === 'jobcards') renderJobCards();
         updateJobCardBadge();
       }
-    }, err => console.warn('JobCards listener:', err));
+    }, err => { console.warn('JobCards listener:', err); syncDiagError('jobCards', err); });
 
     // ── Variation Orders — own collection, remote portal approvals sync back here ──
     db.collection('variationOrders').onSnapshot(snapshot => {
@@ -182,7 +290,7 @@ function setupFirestoreListeners() {
         saveVariationOrdersLocal();
         if (currentPage === 'jobcards') renderJobCards();
       }
-    }, err => console.warn('VariationOrders listener:', err));
+    }, err => { console.warn('VariationOrders listener:', err); syncDiagError('variationOrders', err); });
 
     // ── Payroll Runs — own collection, not nested in erp/store. Same
     // reasoning as Job Cards/Variation Orders above: weekly wage records
@@ -210,7 +318,7 @@ function setupFirestoreListeners() {
         if (currentPage === 'payroll') renderPayrollPage();
         if (typeof updatePayrollBadge === 'function') updatePayrollBadge();
       }
-    }, err => console.warn('PayrollRuns listener:', err));
+    }, err => { console.warn('PayrollRuns listener:', err); syncDiagError('payrollRuns', err); });
 
     // ── Employee Contracts — own collection, same 1MB-cap reasoning as
     // above; each contract also embeds two signature images. Same
@@ -230,7 +338,7 @@ function setupFirestoreListeners() {
         saveContractsLocal();
         if (currentPage === 'contracts') renderContractsPage();
       }
-    }, err => console.warn('EmployeeContracts listener:', err));
+    }, err => { console.warn('EmployeeContracts listener:', err); syncDiagError('employeeContracts', err); });
 
     syncEnabled = true;
     updateSyncIndicator('synced');

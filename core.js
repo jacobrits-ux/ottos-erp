@@ -257,6 +257,7 @@ function showFirebaseSetup() {
     <div class="form-actions">
       <button class="topbar-btn" onclick="saveFirebaseConfig()">⚡ ACTIVATE SYNC</button>
       ${saved.apiKey ? `<button class="topbar-btn secondary" onclick="disableFirebaseSync()">DISABLE</button>` : ''}
+      <button class="topbar-btn secondary" onclick="window.runSyncTest&&runSyncTest()">TEST SYNC</button>
       <button class="topbar-btn secondary" onclick="closeModalDirect()">CANCEL</button>
     </div>
 
