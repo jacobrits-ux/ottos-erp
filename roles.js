@@ -226,20 +226,37 @@ function rlReadyRoleOptions(selected) {
 
 function rlUsersHtml(list) {
   if (!list.length) return '<div style="padding:24px;color:var(--text3)">No users yet.</div>';
-  const rows = list.map(u => {
-    const isMe = currentProfile && u.uid === auth_uid();
+  const me = auth_uid();
+  const parts = list.map(u => {
+    const isMe = currentProfile && u.uid === me;
     const locked = isMe || u.platformAdmin === true;   // mirrors the rules: no self-edits, platform admin untouchable by owners
-    const tags = (isMe ? ' <span class="badge badge-blue">You</span>' : '') + (u.platformAdmin ? ' <span class="badge badge-yellow">Platform admin</span>' : '');
-    const role = locked
-      ? rlEsc((ROLES[u.role] || {}).label || u.role)
-      : `<select onchange="changeUserRole(${rlJs(u.uid)}, this.value)">${rlReadyRoleOptions(u.role)}</select>`;
-    const status = u.active === true ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-gray">Inactive</span>';
-    const actions =
-      (locked ? '' : `<button class="action-btn ${u.active === true ? 'danger' : ''}" onclick="setUserActive(${rlJs(u.uid)}, ${u.active === true ? 'false' : 'true'})">${u.active === true ? 'Deactivate' : 'Activate'}</button> `) +
-      `<button class="action-btn" onclick="resetUserPassword(${rlJs(u.email)})">Reset password</button>`;
-    return `<tr><td>${rlEsc(u.name)}${tags}<br><span class="mono" style="color:var(--text3);font-size:10px">${rlEsc(u.email)}</span></td><td>${role}</td><td>${status}</td><td>${actions}</td></tr>`;
-  }).join('');
+    return {
+      u,
+      name: rlEsc(u.name),
+      email: rlEsc(u.email),
+      tags: (isMe ? ' <span class="badge badge-blue">You</span>' : '') + (u.platformAdmin ? ' <span class="badge badge-yellow">Platform admin</span>' : ''),
+      role: locked
+        ? rlEsc((ROLES[u.role] || {}).label || u.role)
+        : `<select onchange="changeUserRole(${rlJs(u.uid)}, this.value)">${rlReadyRoleOptions(u.role)}</select>`,
+      status: u.active === true ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-gray">Inactive</span>',
+      actions:
+        (locked ? '' : `<button class="action-btn ${u.active === true ? 'danger' : ''}" onclick="setUserActive(${rlJs(u.uid)}, ${u.active === true ? 'false' : 'true'})">${u.active === true ? 'Deactivate' : 'Activate'}</button> `) +
+        `<button class="action-btn" onclick="resetUserPassword(${rlJs(u.email)})">Reset password</button>`,
+    };
+  });
+  // The app hides .table-scroll and shows .card-list below 768px (phones), so BOTH must be rendered —
+  // a table alone is invisible on a phone. Same pattern as the Crew and Clients pages.
+  const rows = parts.map(p => `<tr><td>${p.name}${p.tags}<br><span class="mono" style="color:var(--text3);font-size:10px">${p.email}</span></td><td>${p.role}</td><td>${p.status}</td><td>${p.actions}</td></tr>`).join('');
+  const cards = parts.map(p => `<div class="card-item">
+      <div class="card-item-header">
+        <div><div class="card-item-title">${p.name}${p.tags}</div><div class="card-item-id">${p.email}</div></div>
+        ${p.status}
+      </div>
+      <div class="card-item-row"><span style="color:var(--text3)">Role</span><span>${p.role}</span></div>
+      <div class="card-item-actions">${p.actions}</div>
+    </div>`).join('');
   return `<div class="table-scroll"><table class="data-table"><thead><tr><th>User</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="card-list" style="padding:10px 10px 0">${cards}</div>
     <div style="padding:10px 14px;font-size:11px;color:var(--text3);line-height:1.6">Owners have full access, including payroll and banking details. Supervisor and Worker roles are not available yet.</div>`;
 }
 function auth_uid() { const u = firebase.auth().currentUser; return u ? u.uid : null; }
