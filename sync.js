@@ -44,10 +44,16 @@ function initFirebase() {
       firebase.auth().onAuthStateChanged(user => {
         currentAuthUser = user;
         if (user) {
-          hideLoginOverlay();
-          updateAuthStatusLine(user);
-          setupFirestoreListeners();
+          // A login alone is not access: it needs an active profile (roles.js). Listeners
+          // start only once that is confirmed, so a stranger's login never subscribes to data.
+          ensureProfile(user, () => {
+            hideLoginOverlay();
+            updateAuthStatusLine(user);
+            rlUpdateStatusLine(user);
+            setupFirestoreListeners();
+          });
         } else {
+          clearProfile();
           showLoginOverlay();
           updateAuthStatusLine(null);
         }

@@ -132,7 +132,7 @@ function openOnboarding(crewId) {
   const bankOpts = '<option value="">— Select bank —</option>' + obOptions(OB_BANKS, bk.bankName, 'name');
   const typeOpts = '<option value="">— Select —</option>' + obOptions(OB_ACCOUNT_TYPES, bk.accountType);
   const relOpts  = '<option value="">— Select —</option>' + obOptions(OB_RELATIONSHIPS, em.relationship);
-  openModal('ONBOARDING — ' + obEsc(c.name), `<div class="form-grid">
+  openModal('ONBOARDING — ' + c.name, `<div class="form-grid">
     <div class="form-group full" style="font-size:12px;line-height:1.7;">
       ${tick(p.personal)} Address &amp; ID number ${p.personal ? '' : '<span style="color:var(--text3)">(add under Edit worker)</span>'}<br>
       ${tick(p.emergency)} Emergency contact<br>

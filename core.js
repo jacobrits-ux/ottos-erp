@@ -997,6 +997,7 @@ function closeSidebar() {
 
 // ── NAVIGATION ──
 function navigate(page) {
+  if (window.canView && !canView(page)) { toast('Your role cannot open that page'); return; }
   closeSidebar();
   document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -1036,7 +1037,7 @@ function navigate(page) {
 }
 
 function renderPage(p) {
-  const fn = { dashboard:renderDashboard, projects:renderProjects, schedule:renderSchedule, jobs:renderJobs, jobcards:renderJobCards, quotes:renderQuotes, invoices:renderInvoices, expenses:renderExpenses, clients:renderClients, crew:renderCrew, materials:renderMaterials, reports:renderReports, scanner:renderScanner, describe:renderDescribe, timetrack:renderTimeTrack, blueprint:renderBlueprint, payroll:renderPayrollPage, contracts:renderContractsPage };
+  const fn = { dashboard:renderDashboard, projects:renderProjects, schedule:renderSchedule, jobs:renderJobs, jobcards:renderJobCards, quotes:renderQuotes, invoices:renderInvoices, expenses:renderExpenses, clients:renderClients, crew:renderCrew, materials:renderMaterials, reports:renderReports, scanner:renderScanner, describe:renderDescribe, timetrack:renderTimeTrack, blueprint:renderBlueprint, payroll:renderPayrollPage, contracts:renderContractsPage, users:window.renderUsers };
   if (fn[p]) fn[p]();
 }
 
@@ -2091,6 +2092,7 @@ function handlePrimary() {
     jobcards: showNewJobCard,
     payroll: showNewPayrollRun,
     contracts: showNewContract,
+    users: window.showAddUser,
   };
   (m[currentPage] || (() => toast('Coming soon')))();
 }
