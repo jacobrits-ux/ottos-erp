@@ -240,6 +240,7 @@ function rlUsersHtml(list) {
         : `<select onchange="changeUserRole(${rlJs(u.uid)}, this.value)">${rlReadyRoleOptions(u.role)}</select>`,
       status: u.active === true ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-gray">Inactive</span>',
       actions:
+        (rlCanRename(u) ? `<button class="action-btn" onclick="renameUser(${rlJs(u.uid)})">Rename</button> ` : '') +
         (locked ? '' : `<button class="action-btn ${u.active === true ? 'danger' : ''}" onclick="setUserActive(${rlJs(u.uid)}, ${u.active === true ? 'false' : 'true'})">${u.active === true ? 'Deactivate' : 'Activate'}</button> `) +
         `<button class="action-btn" onclick="resetUserPassword(${rlJs(u.email)})">Reset password</button>`,
     };
@@ -270,6 +271,24 @@ function changeUserRole(uid, role) {
   db.collection('users').doc(uid).update({ role })
     .then(() => { toast('Role updated'); renderUsers(); })
     .catch(err => { alert('Could not change the role (' + (err.code || err.message) + ').'); renderUsers(); });
+}
+
+// Mirrors the Firestore rules: an owner may rename OTHER users (never the platform admin); the platform admin
+// may rename anyone, including themselves. Everyone else cannot edit their own profile.
+function rlCanRename(u) {
+  if (!can('users') || !currentProfile) return false;
+  return currentProfile.platformAdmin === true || (u.uid !== auth_uid() && u.platformAdmin !== true);
+}
+
+function renameUser(uid) {
+  const u = rlFind(uid);
+  if (!u || !rlCanRename(u)) return;
+  const next = String(prompt('Name for ' + u.email, u.name || '') || '').trim();
+  if (!next || next === u.name) return;
+  if (next.length > 60) { alert('Keep the name under 60 characters'); return; }
+  db.collection('users').doc(uid).update({ name: next })
+    .then(() => { toast('Name updated'); renderUsers(); })
+    .catch(err => alert('Could not rename (' + (err.code || err.message) + ').'));
 }
 
 function setUserActive(uid, active) {

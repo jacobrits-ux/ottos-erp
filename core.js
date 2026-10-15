@@ -266,38 +266,15 @@ function showFirebaseSetup() {
       <div style="background:rgba(224,82,82,.06);border:1px solid rgba(224,82,82,.2);padding:10px 12px;font-size:11px;color:var(--text2);line-height:1.8;margin-bottom:10px;">
         Do these two things in Firebase Console <b>first</b>, or ticking the box below will lock you out with no way back in:<br>
         1 → Authentication → Sign-in method → enable <b>Email/Password</b><br>
-        2 → Authentication → Users → Add user → create an account for yourself (and anyone else who needs access)
+        2 → Authentication → Users → Add user → create your own login. Other people are added later from the Users screen.
       </div>
       <label style="display:flex;align-items:center;gap:8px;font-size:12px;text-transform:none;font-family:var(--fb);margin-bottom:10px;"><input type="checkbox" id="fb-auth-enabled" ${saved.authEnabled ? 'checked' : ''} style="width:auto;"> Require sign-in to use this app (once accounts exist above)</label>
       ${authUser ? `<div style="font-family:var(--fm);font-size:11px;color:var(--green);margin-bottom:6px;">Signed in as ${authUser.email}</div><button class="action-btn" onclick="signOutUser()">Sign Out</button>` : ''}
     </div>
 
     <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
-      <div style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--text3);margin-bottom:6px;">FIRESTORE SECURITY RULES — paste in Firebase Console → Firestore → Rules</div>
-      <div style="font-size:11px;color:var(--text3);margin-bottom:8px;">Internal data requires sign-in once the box above is checked. clientForms/clientPortal use Firestore's REST API directly (not this SDK) with no auth of their own — get/update stay open so intake-form autosave and portal approve/decline keep working anonymously, while list/create/delete require sign-in so no one can browse or tamper with other clients' data.</div>
-      <div style="background:var(--bg);border:1px solid var(--border);padding:10px;font-family:var(--fm);font-size:10px;color:var(--text2);line-height:1.8;white-space:pre-wrap;">rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /erp/{document}               { allow read, write: if request.auth != null; }
-    match /jobCards/{document}          { allow read, write: if request.auth != null; }
-    match /variationOrders/{document}   { allow read, write: if request.auth != null; }
-    match /payrollRuns/{document}       { allow read, write: if request.auth != null; }
-    match /employeeContracts/{document} { allow read, write: if request.auth != null; }
-
-    match /clientForms/{document} {
-      allow get: if true;
-      allow list: if request.auth != null;
-      allow create, update: if true;
-      allow delete: if request.auth != null;
-    }
-    match /clientPortal/{document} {
-      allow get: if true;
-      allow list: if request.auth != null;
-      allow update: if true;
-      allow create, delete: if request.auth != null;
-    }
-  }
-}</div>
+      <div style="font-family:var(--fm);font-size:9px;letter-spacing:2px;color:var(--text3);margin-bottom:6px;">FIRESTORE SECURITY RULES</div>
+      <div style="font-size:11px;color:var(--text3);line-height:1.6;">Managed in the Firebase Console (Firestore → Rules). The published text is kept in the project's firestore.rules file rather than here, so it can never go out of date. Company data needs an active Owner profile (see Users). Client intake forms and portal links stay open to anonymous visitors only for what those pages need.</div>
     </div>
     ${saved.apiKey ? `<div style="margin-top:10px;padding:10px;background:rgba(76,175,125,.06);border:1px solid rgba(76,175,125,.2);font-family:var(--fm);font-size:10px;color:var(--text2);">Project: <b style="color:var(--text)">${saved.projectId}</b> · Netlify: <b style="color:var(--text)">${saved.netlifyUrl||'not set'}</b> · Device: <b style="color:var(--text3)">${DEVICE_ID}</b></div>` : ''}
   `);
