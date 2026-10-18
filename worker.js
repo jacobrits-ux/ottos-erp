@@ -190,23 +190,33 @@ function renderMyJobs() {
 }
 
 // ── Add worker login (owners, from the Users screen) ────────────────────────────
+// Crew ids are NUMBERS in the ERP store (nextCrewId() returns max+1), but a form field hands back
+// text and the rules require crewId to be a string. So the link is always the id as text, and every
+// comparison goes through this one function. A record with no id cannot be linked at all.
+function wkCrewKey(c) {
+  const k = c && c.id != null ? String(c.id).trim() : '';
+  return k && k.length <= 40 ? k : null;
+}
+
 // Which crew members can be given a login right now, and which login number each gets.
 function wkCrewChoices() {
   const logins = (typeof rlUsers !== 'undefined' ? rlUsers : []).filter(u => u.role === 'worker');
-  const out = { ok: [], noPhone: [], hasLogin: [], clash: [], full: [] };
+  const out = { ok: [], noPhone: [], noId: [], hasLogin: [], clash: [], full: [] };
   (store.crew || []).forEach(c => {
+    const key = wkCrewKey(c);
+    if (!key) { out.noId.push(c); return; }
     const cell = wkNormCell(c.phone);
     if (!cell) { out.noPhone.push(c); return; }
-    if (logins.some(u => u.crewId === c.id && u.active === true)) { out.hasLogin.push(c); return; }
+    if (logins.some(u => u.crewId === key && u.active === true)) { out.hasLogin.push(c); return; }
     // Two crew records sharing one number would make "which login is whose" ambiguous.
-    if (logins.some(u => u.crewId !== c.id && u.active === true && (wkParseLoginEmail(u.email) || {}).cell === cell)) { out.clash.push(c); return; }
+    if (logins.some(u => u.crewId !== key && u.active === true && (wkParseLoginEmail(u.email) || {}).cell === cell)) { out.clash.push(c); return; }
     let attempt = 1;
     logins.forEach(u => {
       const p = wkParseLoginEmail(u.email);
       if (p && p.cell === cell && p.attempt >= attempt) attempt = p.attempt + 1;
     });
     if (attempt > WK_MAX_LOGINS) { out.full.push(c); return; }
-    out.ok.push({ crew: c, cell, attempt });
+    out.ok.push({ crew: c, key, cell, attempt });
   });
   return out;
 }
@@ -219,6 +229,7 @@ function showAddWorker() {
     const names = a => a.map(c => wkEsc(c.name)).join(', ');
     const notes = [
       ch.noPhone.length ? `No valid cell number on the Crew page (fix it there first): ${names(ch.noPhone)}.` : '',
+      ch.noId.length ? `Have no crew ID, so they cannot be linked: ${names(ch.noId)}.` : '',
       ch.hasLogin.length ? `Already have an active login (deactivate it first to make a replacement): ${names(ch.hasLogin)}.` : '',
       ch.clash.length ? `Share a cell number with another worker's login: ${names(ch.clash)}.` : '',
       ch.full.length ? `Have used all ${WK_MAX_LOGINS} logins for their number. Ask the platform admin: ${names(ch.full)}.` : '',
@@ -228,7 +239,7 @@ function showAddWorker() {
         <div class="form-actions"><button class="topbar-btn secondary" onclick="closeModalDirect()">CLOSE</button></div>`);
       return;
     }
-    const options = ch.ok.map(x => `<option value="${wkEsc(x.crew.id)}">${wkEsc(x.crew.name)} · ${wkEsc(wkFmtCell(x.cell))}${x.attempt > 1 ? ` · login ${x.attempt}` : ''}</option>`).join('');
+    const options = ch.ok.map(x => `<option value="${wkEsc(x.key)}">${wkEsc(x.crew.name)} · ${wkEsc(wkFmtCell(x.cell))}${x.attempt > 1 ? ` · login ${x.attempt}` : ''}</option>`).join('');
     openModal('ADD WORKER LOGIN', `<div class="form-grid">
       <div class="form-group full"><label>Crew member (their cell number is their login)</label><select id="f-wk-crew">${options}</select></div>
       <div class="form-group full"><label>Starting password</label><input type="text" id="f-wk-pass" placeholder="At least 8 characters" autocomplete="off"></div>
@@ -246,7 +257,7 @@ async function saveNewWorker() {
   if (pass.length < 8) { alert('The starting password must be at least 8 characters'); return; }
   // Decided again from fresh data, never from what the form says, so a stale form cannot
   // create a second active login for someone.
-  const pick = wkCrewChoices().ok.find(x => x.crew.id === crewId);
+  const pick = wkCrewChoices().ok.find(x => x.key === crewId);
   if (!pick) { alert('Choose a crew member from the list'); return; }
 
   let uid = null, email = null;
@@ -265,7 +276,7 @@ async function saveNewWorker() {
     if (!uid) { alert(`All ${WK_MAX_LOGINS} logins for this cell number are taken. Ask the platform admin to clear unused ones in the Firebase Console.`); return; }
   }
   try {
-    await rlWriteProfile(uid, pick.crew.name, email, 'worker', crewId);
+    await rlWriteProfile(uid, pick.crew.name, email, 'worker', pick.key);
     wkLastCreated = null;
     closeModalDirect();
     toast('Worker login added');
