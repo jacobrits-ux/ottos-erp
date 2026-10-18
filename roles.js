@@ -12,10 +12,11 @@
 // payroll. Never rely on a can() check alone to protect data.
 //
 // DATA — one document per login at users/{uid}:
-//   { email, name, role, tenantId, platformAdmin, active, createdAt, createdBy }
-// - role: 'owner' | 'supervisor' | 'worker'. Only 'owner' has permissions today;
-//   the other two are declared but not `ready`, so they cannot be assigned from
-//   the UI yet and grant nothing (deny by default) until their access is designed.
+//   { email, name, role, tenantId, platformAdmin, active, createdAt, createdBy, crewId? }
+// - crewId: worker logins only; the id of their Crew record (worker.js).
+// - role: 'owner' | 'supervisor' | 'worker'. Owner has every permission; worker only 'myjobs'
+//   (worker.js). Supervisor is declared but not `ready`: it grants nothing (deny by default)
+//   and cannot be assigned until its access is designed.
 // - tenantId: 'ottos' today. Carried from day one so the multi-tenant data model
 //   (matrix item 12) doesn't force a rewrite of every rule.
 // - platformAdmin: the platform operator (Jaco). NOT a company role; it sits
@@ -40,7 +41,9 @@ const DEFAULT_TENANT = 'ottos';
 const ROLES = {
   owner:      { label: 'Owner',      perms: '*', ready: true },
   supervisor: { label: 'Supervisor', perms: [],  ready: false },
-  worker:     { label: 'Worker',     perms: [],  ready: false },
+  // A worker sees only their own jobs and clock. viaUsers:false = never offered in the Add user / role
+  // dropdowns: a worker login needs a crew link and a cell-number login, so it is made in worker.js.
+  worker:     { label: 'Worker',     perms: ['myjobs'], ready: true, viaUsers: false },
 };
 
 // Sidebar entries that call a function rather than navigate('page').
@@ -167,6 +170,7 @@ function applyRoleToUi() {
     if (m && BNAV_PAGES.indexOf(m[1]) !== -1) el.style.display = can(m[1]) ? '' : 'none';
   });
   rlEnsureUsersNav();
+  if (window.wkApplyRole) wkApplyRole();   // worker.js: My Jobs entry, hides what a worker cannot use
 }
 function rlEnsureUsersNav() {
   let el = document.getElementById('nav-users');
@@ -220,9 +224,12 @@ function rlLoadUsers() {
 }
 
 function rlReadyRoleOptions(selected) {
-  return Object.keys(ROLES).filter(k => ROLES[k].ready || k === selected)
+  return Object.keys(ROLES).filter(k => (ROLES[k].ready && ROLES[k].viaUsers !== false) || k === selected)
     .map(k => `<option value="${k}" ${k === selected ? 'selected' : ''} ${ROLES[k].ready ? '' : 'disabled'}>${rlEsc(ROLES[k].label)}</option>`).join('');
 }
+
+// Workers are shown by cell number, not by their made-up login address (worker.js).
+function rlShownId(u) { return window.wkDisplayId ? wkDisplayId(u) : u.email; }
 
 function rlUsersHtml(list) {
   if (!list.length) return '<div style="padding:24px;color:var(--text3)">No users yet.</div>';
@@ -233,16 +240,16 @@ function rlUsersHtml(list) {
     return {
       u,
       name: rlEsc(u.name),
-      email: rlEsc(u.email),
+      email: rlEsc(rlShownId(u)),
       tags: (isMe ? ' <span class="badge badge-blue">You</span>' : '') + (u.platformAdmin ? ' <span class="badge badge-yellow">Platform admin</span>' : ''),
-      role: locked
+      role: locked || u.role === 'worker'
         ? rlEsc((ROLES[u.role] || {}).label || u.role)
         : `<select onchange="changeUserRole(${rlJs(u.uid)}, this.value)">${rlReadyRoleOptions(u.role)}</select>`,
       status: u.active === true ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-gray">Inactive</span>',
       actions:
         (rlCanRename(u) ? `<button class="action-btn" onclick="renameUser(${rlJs(u.uid)})">Rename</button> ` : '') +
         (locked ? '' : `<button class="action-btn ${u.active === true ? 'danger' : ''}" onclick="setUserActive(${rlJs(u.uid)}, ${u.active === true ? 'false' : 'true'})">${u.active === true ? 'Deactivate' : 'Activate'}</button> `) +
-        `<button class="action-btn" onclick="resetUserPassword(${rlJs(u.email)})">Reset password</button>`,
+        (u.role === 'worker' ? '' : `<button class="action-btn" onclick="resetUserPassword(${rlJs(u.email)})">Reset password</button>`),
     };
   });
   // The app hides .table-scroll and shows .card-list below 768px (phones), so BOTH must be rendered —
@@ -256,9 +263,12 @@ function rlUsersHtml(list) {
       <div class="card-item-row"><span style="color:var(--text3)">Role</span><span>${p.role}</span></div>
       <div class="card-item-actions">${p.actions}</div>
     </div>`).join('');
-  return `<div class="table-scroll"><table class="data-table"><thead><tr><th>User</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
+  const addWorkerBar = window.showAddWorker
+    ? '<div style="padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="action-btn" onclick="showAddWorker()">+ ADD WORKER LOGIN</button><span style="font-size:11px;color:var(--text3)">Workers sign in with their cell number.</span></div>'
+    : '';
+  return `${addWorkerBar}<div class="table-scroll"><table class="data-table"><thead><tr><th>User</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
     <div class="card-list" style="padding:10px 10px 0">${cards}</div>
-    <div style="padding:10px 14px;font-size:11px;color:var(--text3);line-height:1.6">Owners have full access, including payroll and banking details. Supervisor and Worker roles are not available yet.</div>`;
+    <div style="padding:10px 14px;font-size:11px;color:var(--text3);line-height:1.6">Owners have full access, including payroll and banking details. The Supervisor role is not available yet. A forgotten worker password means an owner adds a replacement login.</div>`;
 }
 function auth_uid() { const u = firebase.auth().currentUser; return u ? u.uid : null; }
 
@@ -266,7 +276,7 @@ function rlFind(uid) { return rlUsers.find(u => u.uid === uid); }
 
 function changeUserRole(uid, role) {
   const u = rlFind(uid);
-  if (!can('users') || !u || !ROLES[role] || !ROLES[role].ready || u.role === role) { renderUsers(); return; }
+  if (!can('users') || !u || !ROLES[role] || !ROLES[role].ready || ROLES[role].viaUsers === false || u.role === 'worker' || u.role === role) { renderUsers(); return; }
   if (!confirm(`Change ${u.name || u.email} to ${ROLES[role].label}?`)) { renderUsers(); return; }
   db.collection('users').doc(uid).update({ role })
     .then(() => { toast('Role updated'); renderUsers(); })
@@ -344,15 +354,18 @@ function rlCreateAuthAccount(email, password) {
           err => done(() => { throw err; }));
 }
 
-function rlWriteProfile(uid, name, email, role) {
-  return db.collection('users').doc(uid).set({
+// crewId links a worker login to their Crew record; only worker profiles carry one in this build.
+function rlWriteProfile(uid, name, email, role, crewId) {
+  const profile = {
     email, name, role,
     tenantId: currentProfile.tenantId,
     platformAdmin: false,
     active: true,
     createdAt: new Date().toISOString(),
     createdBy: currentProfile.email,
-  });
+  };
+  if (crewId) profile.crewId = crewId;
+  return db.collection('users').doc(uid).set(profile);
 }
 
 function saveNewUser() {
@@ -361,7 +374,7 @@ function saveNewUser() {
   const name = v('f-usr-name').trim(), email = v('f-usr-email').trim().toLowerCase(), role = v('f-usr-role'), pass = v('f-usr-pass');
   if (!name) { alert('Enter the person\'s name'); return; }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { alert('Enter a valid email address'); return; }
-  if (!ROLES[role] || !ROLES[role].ready) { alert('Choose a role'); return; }
+  if (!ROLES[role] || !ROLES[role].ready || ROLES[role].viaUsers === false) { alert('Choose a role'); return; }
   if (pass.length < 8) { alert('The starting password must be at least 8 characters'); return; }
 
   const finish = uid => rlWriteProfile(uid, name, email, role).then(() => {

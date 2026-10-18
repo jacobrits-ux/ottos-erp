@@ -1014,7 +1014,7 @@ function navigate(page) {
 }
 
 function renderPage(p) {
-  const fn = { dashboard:renderDashboard, projects:renderProjects, schedule:renderSchedule, jobs:renderJobs, jobcards:renderJobCards, quotes:renderQuotes, invoices:renderInvoices, expenses:renderExpenses, clients:renderClients, crew:renderCrew, materials:renderMaterials, reports:renderReports, scanner:renderScanner, describe:renderDescribe, timetrack:renderTimeTrack, blueprint:renderBlueprint, payroll:renderPayrollPage, contracts:renderContractsPage, users:window.renderUsers };
+  const fn = { dashboard:renderDashboard, projects:renderProjects, schedule:renderSchedule, jobs:renderJobs, jobcards:renderJobCards, quotes:renderQuotes, invoices:renderInvoices, expenses:renderExpenses, clients:renderClients, crew:renderCrew, materials:renderMaterials, reports:renderReports, scanner:renderScanner, describe:renderDescribe, timetrack:renderTimeTrack, blueprint:renderBlueprint, payroll:renderPayrollPage, contracts:renderContractsPage, users:window.renderUsers, myjobs:window.renderMyJobs };
   if (fn[p]) fn[p]();
 }
 

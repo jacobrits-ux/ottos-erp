@@ -50,7 +50,10 @@ function initFirebase() {
             hideLoginOverlay();
             updateAuthStatusLine(user);
             rlUpdateStatusLine(user);
-            setupFirestoreListeners();
+            // A worker login can read only its own profile: the owner listeners would be refused by the
+            // rules (and show OFFLINE), so they never start for a worker.
+            if (currentProfile && currentProfile.role === 'worker') updateSyncIndicator('not-configured');
+            else setupFirestoreListeners();
           });
         } else {
           clearProfile();
@@ -397,7 +400,9 @@ function attemptSignIn() {
   const password = (document.getElementById('login-password') || {}).value;
   const errEl = document.getElementById('login-error');
   if (errEl) errEl.textContent = '';
-  if (!email || !password) { if (errEl) errEl.textContent = 'Enter both email and password'; return; }
+  if (!email || !password) { if (errEl) errEl.textContent = 'Enter both email (or cell number) and password'; return; }
+  // No '@' = a worker typing their cell number (worker.js derives and tries their login).
+  if (email.indexOf('@') === -1 && window.wkSignIn) { wkSignIn(email, password, errEl); return; }
   firebase.auth().signInWithEmailAndPassword(email, password).catch(err => {
     const messages = {
       'auth/user-not-found': 'No account with that email — ask whoever manages this system to create one for you',
