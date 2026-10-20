@@ -229,7 +229,7 @@ function rlReadyRoleOptions(selected) {
 }
 
 // Workers are shown by cell number, not by their made-up login address (worker.js).
-function rlShownId(u) { return window.wkDisplayId ? wkDisplayId(u) : u.email; }
+function rlShownId(u) { return (window.wkDisplayId ? wkDisplayId(u) : u.email) + (window.asgLinkSuffix ? asgLinkSuffix(u) : ''); }
 
 function rlUsersHtml(list) {
   if (!list.length) return '<div style="padding:24px;color:var(--text3)">No users yet.</div>';
@@ -249,7 +249,8 @@ function rlUsersHtml(list) {
       actions:
         (rlCanRename(u) ? `<button class="action-btn" onclick="renameUser(${rlJs(u.uid)})">Rename</button> ` : '') +
         (locked ? '' : `<button class="action-btn ${u.active === true ? 'danger' : ''}" onclick="setUserActive(${rlJs(u.uid)}, ${u.active === true ? 'false' : 'true'})">${u.active === true ? 'Deactivate' : 'Activate'}</button> `) +
-        (u.role === 'worker' ? '' : `<button class="action-btn" onclick="resetUserPassword(${rlJs(u.email)})">Reset password</button>`),
+        (u.role === 'worker' ? '' : `<button class="action-btn" onclick="resetUserPassword(${rlJs(u.email)})">Reset password</button>`) +
+        (window.asgLinkButton ? ' ' + asgLinkButton(u) : ''),
     };
   });
   // The app hides .table-scroll and shows .card-list below 768px (phones), so BOTH must be rendered —

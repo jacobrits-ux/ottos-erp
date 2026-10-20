@@ -1142,7 +1142,7 @@ function renderJobTicketCards(arr) {
   el.innerHTML = arr.map((j, i) => `
     <div class="card-item">
       <div class="card-item-header">
-        <div><div class="card-item-title">${j.task}</div><div class="card-item-id">${j.id}</div></div>
+        <div><div class="card-item-title">${j.task}</div><div class="card-item-id">${j.id}</div>${window.asgTicketBadge?asgTicketBadge(j):''}</div>
         ${statusBadge(j.priority)}
       </div>
       <div class="card-item-row"><span style="color:var(--text3)">Project</span><span class="badge badge-blue">${j.project}</span></div>
@@ -1150,6 +1150,7 @@ function renderJobTicketCards(arr) {
       <div class="card-item-row"><span style="color:var(--text3)">Due</span><span style="font-family:var(--fm);font-size:11px">${dt(j.due)}</span></div>
       <div class="card-item-row" style="margin-bottom:6px"><span style="color:var(--text3)">Status</span>${statusBadge(j.status)}</div>
       <div class="card-item-actions">
+        <button class="action-btn" onclick="asgOpenTicket(${i})">Workers</button>
         <button class="action-btn" onclick="toggleJobStatus(${i})">Toggle Status</button>
         <button class="action-btn danger" onclick="deleteItem('jobs',${i})">Delete</button>
       </div>
@@ -1471,10 +1472,10 @@ function renderSchedule() {
 function renderJobs() {
   document.getElementById('jobs-body').innerHTML = store.jobs.map((j,i) => `
     <tr>
-      <td class="mono">${j.id}</td><td><strong>${j.task}</strong></td>
+      <td class="mono">${j.id}</td><td><strong>${j.task}</strong>${window.asgTicketBadge?asgTicketBadge(j):''}</td>
       <td><span class="badge badge-blue">${j.project}</span></td><td>${j.assigned}</td>
       <td>${statusBadge(j.priority)}</td><td class="mono">${dt(j.due)}</td><td>${statusBadge(j.status)}</td>
-      <td><button class="action-btn" onclick="toggleJobStatus(${i})">Toggle</button> <button class="action-btn danger" onclick="deleteItem('jobs',${i})">Del</button></td>
+      <td><button class="action-btn" onclick="asgOpenTicket(${i})">Workers</button> <button class="action-btn" onclick="toggleJobStatus(${i})">Toggle</button> <button class="action-btn danger" onclick="deleteItem('jobs',${i})">Del</button></td>
     </tr>`).join('');
   renderJobTicketCards(store.jobs);
 }

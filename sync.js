@@ -52,11 +52,18 @@ function initFirebase() {
             rlUpdateStatusLine(user);
             // A worker login can read only its own profile: the owner listeners would be refused by the
             // rules (and show OFFLINE), so they never start for a worker.
-            if (currentProfile && currentProfile.role === 'worker') updateSyncIndicator('not-configured');
-            else setupFirestoreListeners();
+            // Workers listen only to their own assignments (assignments.js); owners get the store listeners
+            // plus the live assignments list.
+            if (currentProfile && currentProfile.role === 'worker') {
+              if (window.asgStartWorkerSync) asgStartWorkerSync(); else updateSyncIndicator('not-configured');
+            } else {
+              setupFirestoreListeners();
+              if (window.asgStartOwnerSync) asgStartOwnerSync();
+            }
           });
         } else {
           clearProfile();
+          if (window.asgStopSync) asgStopSync();
           showLoginOverlay();
           updateAuthStatusLine(null);
         }

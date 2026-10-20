@@ -109,20 +109,25 @@ async function wkSignIn(raw, password, errEl) {
 
 // ── Applying the worker role to the UI (convenience only; the rules are the boundary) ──
 function wkIsWorker() { return !!(currentProfile && currentProfile.role === 'worker'); }
+// An owner who also does jobs has their profile linked to their crew record and gets My Jobs too.
+function wkHasMyJobs() {
+  return !!(currentProfile && currentProfile.active === true &&
+    (currentProfile.role === 'worker' || (currentProfile.role === 'owner' && currentProfile.crewId)));
+}
 
 function wkApplyRole() {
   const worker = wkIsWorker();
+  const hasPage = wkHasMyJobs();
   const navEl = document.getElementById('nav-myjobs');
   const bnavEl = document.getElementById('bnav-myjobs');
   const primary = document.getElementById('topbar-primary');
   const sections = document.querySelectorAll('.nav-section');
 
-  if (!worker) {
-    if (navEl) navEl.remove();
+  if (!hasPage || !worker) {
     if (bnavEl) bnavEl.remove();
     if (primary) primary.style.display = '';
     sections.forEach(s => { s.style.display = ''; });
-    return;
+    if (!hasPage) { if (navEl) navEl.remove(); return; }
   }
 
   if (!navEl) {
@@ -136,6 +141,7 @@ function wkApplyRole() {
     if (logo) logo.insertAdjacentElement('afterend', el);
     else if (sidebar) sidebar.insertBefore(el, sidebar.firstChild);
   }
+  if (!worker) return;   // an owner gets the menu entry only; the rest of their menu is untouched
   if (!bnavEl) {
     const more = document.getElementById('bnav-more');
     if (more) {
@@ -174,18 +180,22 @@ function renderMyJobs() {
   const root = wkMyJobsRoot();
   const title = document.getElementById('page-title');
   if (title) title.textContent = 'My Jobs';
-  if (!wkIsWorker()) {
-    root.innerHTML = '<div style="padding:24px;color:var(--text3);font-family:var(--fm);font-size:11px">This page is for worker logins.</div>';
+  if (!wkHasMyJobs()) {
+    root.innerHTML = '<div style="padding:24px;color:var(--text3);font-size:13px;line-height:1.6;max-width:520px">This page shows the jobs sent to you. Owners get it once the platform admin links their login to their crew record (Users screen).</div>';
     return;
   }
+  const worker = wkIsWorker();
   const p = wkParseLoginEmail(currentProfile.email);
-  const who = p ? `Signed in with cell number ${wkEsc(wkFmtCell(p.cell))}` : `Signed in as ${wkEsc(currentProfile.email)}`;
-  root.innerHTML = `<div style="padding:24px;max-width:520px">
-    <div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--accent);text-transform:uppercase;margin-bottom:6px">Welcome</div>
+  const who = worker
+    ? (p ? `Signed in with cell number ${wkEsc(wkFmtCell(p.cell))}` : `Signed in as ${wkEsc(currentProfile.email)}`)
+    : 'Jobs sent to you as a crew member';
+  const jobs = window.asgMyJobsHtml ? asgMyJobsHtml() : '';
+  root.innerHTML = `<div style="padding:24px;max-width:560px">
+    <div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--accent);text-transform:uppercase;margin-bottom:6px">${worker ? 'Welcome' : 'My jobs'}</div>
     <div style="font-size:20px;font-weight:600;margin-bottom:4px">${wkEsc(currentProfile.name)}</div>
-    <div style="font-size:12px;color:var(--text3);margin-bottom:18px">${who}</div>
-    <div style="font-size:13px;line-height:1.7;color:var(--text2);margin-bottom:22px">Your login works. Jobs your owner assigns to you, and the clock, will appear on this page in the next update. There is nothing for you to do yet.</div>
-    <button class="topbar-btn secondary" onclick="signOutUser()">SIGN OUT</button>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:6px">${who}</div>
+    ${jobs}
+    ${worker ? '<div style="margin-top:28px"><button class="topbar-btn secondary" onclick="signOutUser()">SIGN OUT</button></div>' : ''}
   </div>`;
 }
 
