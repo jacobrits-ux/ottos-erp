@@ -55,15 +55,17 @@ function initFirebase() {
             // Workers listen only to their own assignments (assignments.js); owners get the store listeners
             // plus the live assignments list.
             if (currentProfile && currentProfile.role === 'worker') {
-              if (window.asgStartWorkerSync) asgStartWorkerSync(); else updateSyncIndicator('not-configured');
+              if (window.asgStartWorkerSync) { asgStartWorkerSync(); if (window.clkStartWorkerSync) clkStartWorkerSync(); } else updateSyncIndicator('not-configured');
             } else {
               setupFirestoreListeners();
               if (window.asgStartOwnerSync) asgStartOwnerSync();
+              if (window.clkStartOwnerSync) clkStartOwnerSync();
             }
           });
         } else {
           clearProfile();
           if (window.asgStopSync) asgStopSync();
+          if (window.clkStopSync) clkStopSync();
           showLoginOverlay();
           updateAuthStatusLine(null);
         }

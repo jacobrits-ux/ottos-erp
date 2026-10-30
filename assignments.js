@@ -167,7 +167,8 @@ function asgTicketBadge(t) {
   const list = asgForTicket(t);
   if (!list.length) return '';
   const n = s => list.filter(a => a.status === s).length;
-  const parts = [[n('accepted'), 'accepted'], [n('assigned'), 'waiting'], [n('declined'), 'declined']].filter(x => x[0]).map(x => `${x[0]} ${x[1]}`);
+  const onSite = window.clkOnSiteCount ? clkOnSiteCount(t) : 0;
+  const parts = [[onSite, 'on site'], [n('accepted'), 'accepted'], [n('assigned'), 'waiting'], [n('declined'), 'declined']].filter(x => x[0]).map(x => `${x[0]} ${x[1]}`);
   return `<div style="font-family:var(--fm);font-size:10px;color:var(--text3);margin-top:3px">👷 ${parts.join(' · ')}</div>`;
 }
 function asgOpenTicket(i) {
@@ -372,6 +373,7 @@ function asgTicketWorkersHtml(ticket) {
     return `<div style="padding:10px 0;border-bottom:1px solid var(--border)">
       <div style="display:flex;justify-content:space-between;gap:10px"><strong>${wkEsc(a.workerName)}</strong>
         <span style="font-family:var(--fm);font-size:10px;color:${asgStatusColor(a)}">${wkEsc(asgStatusText(a))}${when}</span></div>
+      ${window.clkOwnerLine ? clkOwnerLine(a) : ''}
       ${a.status === 'declined' && a.declineReason ? `<div style="font-size:12px;color:var(--text2);margin-top:4px">“${wkEsc(a.declineReason)}”</div>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${btns}</div></div>`;
   }).join('');
@@ -428,7 +430,7 @@ function asgCardHtml(a) {
   const actions = a.status === 'assigned'
     ? `<div style="display:flex;gap:10px;margin-top:12px"><button class="topbar-btn" onclick="asgAccept(${id})">ACCEPT</button><button class="topbar-btn secondary" onclick="asgDeclineAsk(${id})">DECLINE</button></div>`
     : a.status === 'accepted'
-      ? '<div style="font-size:11px;color:var(--text3);margin-top:10px">Accepted. The clock button arrives with the next update.</div>'
+      ? (window.clkCardAction ? clkCardAction(a) : '')
       : `<div style="font-size:11px;color:var(--text3);margin-top:10px">You declined this job${a.declineReason ? ': “' + wkEsc(a.declineReason) + '”' : ''}.</div>`;
   return `<div class="card-item" style="margin-bottom:12px">
     <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
@@ -442,15 +444,19 @@ function asgCardHtml(a) {
 }
 
 function asgMyJobsHtml() {
-  if (asgMineError) return `<div style="font-size:13px;color:var(--red);line-height:1.6">Your jobs could not be loaded (${wkEsc(asgMineError)}). Check your connection and reopen the app.</div>`;
-  if (!asgMineReady) return '<div style="font-size:13px;color:var(--text3)">Loading your jobs…</div>';
+  // The clock banner comes first and is shown in EVERY state: someone who is clocked in must always be able
+  // to clock out, even while the job list is loading, failed to load, or the job itself was cancelled.
+  const banner = window.clkBannerHtml ? clkBannerHtml() : '';
+  if (asgMineError) return banner + `<div style="font-size:13px;color:var(--red);line-height:1.6;margin-top:10px">Your jobs could not be loaded (${wkEsc(asgMineError)}). Check your connection and reopen the app.</div>`;
+  if (!asgMineReady) return banner + '<div style="font-size:13px;color:var(--text3);margin-top:10px">Loading your jobs…</div>';
+  const hours = window.clkHoursHtml ? clkHoursHtml() : '';
   const byDue = (a, b) => String(a.due || '9999').localeCompare(String(b.due || '9999')) || String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
   const waiting = asgMine.filter(a => a.status === 'assigned').sort(byDue);
   const accepted = asgMine.filter(a => a.status === 'accepted').sort(byDue);
   const declined = asgMine.filter(a => a.status === 'declined').sort((a, b) => String(b.respondedAt || '').localeCompare(String(a.respondedAt || ''))).slice(0, 5);
-  if (!waiting.length && !accepted.length && !declined.length) return '<div style="font-size:13px;color:var(--text3);line-height:1.6">Nothing is assigned to you right now. When an owner sends you a job it appears here.</div>';
+  if (!waiting.length && !accepted.length && !declined.length) return banner + '<div style="font-size:13px;color:var(--text3);line-height:1.6;margin-top:10px">Nothing is assigned to you right now. When an owner sends you a job it appears here.</div>' + hours;
   const section = (title, arr) => arr.length ? `<div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;margin:18px 0 8px">${title} (${arr.length})</div>${arr.map(asgCardHtml).join('')}` : '';
-  return section('Waiting for your answer', waiting) + section('Accepted', accepted) + section('Declined', declined);
+  return banner + section('Waiting for your answer', waiting) + section('Accepted', accepted) + section('Declined', declined) + hours;
 }
 
 async function asgAccept(id) {
