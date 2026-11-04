@@ -998,7 +998,7 @@ function navigate(page) {
     clients:{ primary:'+ NEW CLIENT', secondary:null }, crew:{ primary:'+ ADD WORKER', secondary:null },
     materials:{ primary:'+ ADD ITEM', secondary:null }, schedule:{ primary:'+ ASSIGN', secondary:null },
     reports:{ primary:'EXPORT PDF', secondary:null }, scanner:{ primary:'📷 SCAN INVOICE', secondary:null }, describe:{ primary:'💬 DESCRIBE PROJECT', secondary:null },
-    timetrack:{ primary:'+ LOG MANUAL', secondary:'EXPORT CSV' }, blueprint:{ primary:'⊞ UPLOAD', secondary:null },
+    timetrack:{ primary:'+ LOG MANUAL', secondary:'EXPORT CSV' }, blueprint:{ primary:'⊞ UPLOAD', secondary:null }, actions:{ primary:'⚙ LIMITS', secondary:null },
     payroll:{ primary:'+ NEW PAYROLL RUN', secondary:null },
     contracts:{ primary:'+ NEW CONTRACT', secondary:null },
   };
@@ -1014,7 +1014,7 @@ function navigate(page) {
 }
 
 function renderPage(p) {
-  const fn = { dashboard:renderDashboard, projects:renderProjects, schedule:renderSchedule, jobs:renderJobs, jobcards:renderJobCards, quotes:renderQuotes, invoices:renderInvoices, expenses:renderExpenses, clients:renderClients, crew:renderCrew, materials:renderMaterials, reports:renderReports, scanner:renderScanner, describe:renderDescribe, timetrack:renderTimeTrack, blueprint:renderBlueprint, payroll:renderPayrollPage, contracts:renderContractsPage, users:window.renderUsers, myjobs:window.renderMyJobs };
+  const fn = { dashboard:renderDashboard, projects:renderProjects, schedule:renderSchedule, jobs:renderJobs, jobcards:renderJobCards, quotes:renderQuotes, invoices:renderInvoices, expenses:renderExpenses, clients:renderClients, crew:renderCrew, materials:renderMaterials, reports:renderReports, scanner:renderScanner, describe:renderDescribe, timetrack:renderTimeTrack, blueprint:renderBlueprint, payroll:renderPayrollPage, contracts:renderContractsPage, users:window.renderUsers, myjobs:window.renderMyJobs, actions:window.renderActions };
   if (fn[p]) fn[p]();
 }
 
@@ -2070,7 +2070,7 @@ function handlePrimary() {
     jobcards: showNewJobCard,
     payroll: showNewPayrollRun,
     contracts: showNewContract,
-    users: window.showAddUser,
+    users: window.showAddUser, actions: window.revSettingsAsk,
   };
   (m[currentPage] || (() => toast('Coming soon')))();
 }
@@ -3861,7 +3861,7 @@ function startElapsedTimer(clockInDate) {
 
 // ── Active sessions panel ──
 function renderActiveSessions() {
-  const open = (store.timeSessions || []).filter(s => s.clockOut === null);
+  const open = (window.allTimeSessions?allTimeSessions():store.timeSessions||[]).filter(s => s.clockOut === null);
   const el = document.getElementById('tt-active-sessions');
   if (!el) return;
   if (open.length === 0) {
@@ -3887,7 +3887,7 @@ function renderActiveSessions() {
 // ── Force clock out any session (for supervisors) ──
 function forceClockOut(sessionId) {
   const idx = (store.timeSessions || []).findIndex(s => s.id === sessionId);
-  if (idx === -1) return;
+  if (idx === -1) { if (window.revOpen) revOpen(sessionId); return; }
   const s = store.timeSessions[idx];
   const now = new Date();
   s.clockOut = now.toISOString();
@@ -3916,7 +3916,7 @@ function renderWeeklySummary() {
   const weekLabel = document.getElementById('tt-week-label');
   if (weekLabel) weekLabel.textContent = `${monday.toLocaleDateString('en-ZA', { day:'numeric', month:'short' })} — ${sunday.toLocaleDateString('en-ZA', { day:'numeric', month:'short', year:'numeric' })}`;
 
-  const sessions = (store.timeSessions || []).filter(s => {
+  const sessions = (window.allTimeSessions?allTimeSessions():store.timeSessions||[]).filter(s => {
     const ci = new Date(s.clockIn);
     return ci >= monday && ci <= sunday && s.clockOut !== null;
   });
@@ -3998,7 +3998,7 @@ function shiftWeek(dir) {
 
 // ── Session history table ──
 function renderSessionHistory() {
-  const sessions = (store.timeSessions || []).filter(s => s.clockOut !== null).slice(0, 50);
+  const sessions = (window.allTimeSessions?allTimeSessions():store.timeSessions||[]).filter(s => s.clockOut !== null).slice(0, 50);
   const el = document.getElementById('tt-history-body');
   if (!el) return;
   if (sessions.length === 0) {
@@ -4044,8 +4044,9 @@ function renderSessionHistory() {
 
 function deleteTimeSession(displayIdx) {
   // displayIdx is index in filtered (completed) array — find in full array
-  const completed = (store.timeSessions || []).filter(s => s.clockOut !== null);
+  const completed = (window.allTimeSessions?allTimeSessions():store.timeSessions||[]).filter(s => s.clockOut !== null);
   const session = completed[displayIdx];
+  if (session && session._ext) { toast('Worker-app hours are changed on the Action Items screen'); return; }
   if (!session || !confirm('Delete this time session?')) return;
   const idx = store.timeSessions.findIndex(s => s.id === session.id);
   if (idx !== -1) store.timeSessions.splice(idx, 1);
@@ -4098,7 +4099,7 @@ function saveManualTimeEntry() {
 
 // ── CSV Export ──
 function exportTimeCSV() {
-  const sessions = (store.timeSessions || []).filter(s => s.clockOut !== null);
+  const sessions = (window.allTimeSessions?allTimeSessions():store.timeSessions||[]).filter(s => s.clockOut !== null);
   if (sessions.length === 0) { toast('No completed sessions to export'); return; }
   const rows = [['Worker','Date','Clock In','Clock Out','Duration (min)','Hours','Location','Project']];
   sessions.forEach(s => {
@@ -4125,7 +4126,7 @@ function exportTimeCSV() {
 
 // ── Active session badge in nav ──
 function updateActiveSessionBadge() {
-  const count = (store.timeSessions || []).filter(s => s.clockOut === null).length;
+  const count = (window.allTimeSessions?allTimeSessions():store.timeSessions||[]).filter(s => s.clockOut === null).length;
   const badge = document.getElementById('active-sessions-badge');
   if (badge) { badge.textContent = count; badge.style.display = count > 0 ? '' : 'none'; }
 }

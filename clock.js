@@ -24,9 +24,9 @@
 
 const CLK_COLL = 'workSessions';
 const CLK_STATE = 'clockState';
-const CLK_RADIUS_M = 3000;
-const CLK_ACCURACY_M = 500;
-const CLK_MAX_OPEN_H = 14;
+const CLK_SETTINGS_DOC = 'clock';   // settings/clock — owners edit it on the Action Items page
+// Defaults, used until the shared settings arrive (and if they never do, e.g. a first start with no signal).
+const CLK_DEFAULTS = { radiusM: 3000, accuracyM: 500, maxHours: 14, skewMin: 5 };
 let CLK_SAVE_WAIT_MS = 4000;   // not const so tests can shorten the wait
 
 let clkMine = [];            // this login's own sessions, live
@@ -38,6 +38,8 @@ let clkBusy = false;
 let clkTicker = null;
 let clkRecent = [];          // owner listener 1 (last 14 days)
 let clkOpenAll = [];         // owner listener 2 (every open session, however old)
+let clkUnsettled = [];       // owner listener 3 (every session not yet paid or declined, however old)
+let clkSettings = { ...CLK_DEFAULTS };
 
 // ── Pure helpers ────────────────────────────────────────────────────────────────
 // Great-circle distance in metres (haversine).
@@ -50,18 +52,30 @@ function clkDistanceM(a, b) {
 function clkSitePoint(a) {
   return a && a.siteCheck === true && typeof a.siteLat === 'number' && typeof a.siteLng === 'number' ? { lat: a.siteLat, lng: a.siteLng } : null;
 }
+// The limits in force: the shared settings once they have arrived, otherwise the defaults. Each value is
+// range-checked so a bad document can never switch the checks off.
+function clkCfg() {
+  const s = clkSettings || {};
+  const ok = (v, lo, hi, d) => (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : d);
+  return {
+    radiusM: ok(s.radiusM, 100, 50000, CLK_DEFAULTS.radiusM), accuracyM: ok(s.accuracyM, 20, 5000, CLK_DEFAULTS.accuracyM),
+    maxHours: ok(s.maxHours, 4, 48, CLK_DEFAULTS.maxHours), skewMin: ok(s.skewMin, 1, 120, CLK_DEFAULTS.skewMin),
+  };
+}
 // pos = {lat, lng, acc} or null when no reading was possible. Returns {flags, dist}.
-function clkAssess(pos, site) {
+function clkAssess(pos, site, cfg) {
+  const c = cfg || clkCfg();
   if (!site) return { flags: [], dist: null };   // "no site check": nothing to judge
   if (!pos) return { flags: ['noLocation'], dist: null };
   const dist = clkDistanceM(pos, site);
   const flags = [];
-  if (!Number.isFinite(pos.acc) || pos.acc > CLK_ACCURACY_M) flags.push('poorAccuracy');
-  if (dist > CLK_RADIUS_M) flags.push('far');
+  if (!Number.isFinite(pos.acc) || pos.acc > c.accuracyM) flags.push('poorAccuracy');
+  if (dist > c.radiusM) flags.push('far');
   return { flags, dist };
 }
 function clkFlagText(f) {
-  return { far: 'more than 3 km from the site', poorAccuracy: 'location not accurate enough', noLocation: 'no location' }[f] || f;
+  const km = Math.round(clkCfg().radiusM / 100) / 10;
+  return { far: `more than ${km} km from the site`, poorAccuracy: 'location not accurate enough', noLocation: 'no location' }[f] || f;
 }
 function clkSessionId(uid, iso) { return `S${uid}_${Date.parse(iso).toString(36)}`; }
 function clkFmtDuration(ms) {
@@ -78,8 +92,8 @@ function clkFmtDay(iso) {
   return `${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()]} ${d.getDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()]}`;
 }
 function clkSessionMs(s, nowMs) {
-  const start = Date.parse(s.inAt);
-  const end = s.status === 'closed' ? Date.parse(s.outAt) : nowMs;
+  const start = Date.parse(s.adjInAt || s.inAt);   // an owner's correction replaces the phone's times
+  const end = s.status === 'closed' ? Date.parse(s.adjOutAt || s.outAt) : nowMs;
   return Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start) : 0;
 }
 // Phones and tablets only. This keeps honest people from clocking in on a laptop (whose location is a guess),
@@ -152,7 +166,7 @@ async function clkIn(assignmentId) {
     const sid = clkSessionId(uid, now);
     const s = {
       assignmentId: a.id, jobKey: a.jobKey, jobTask: a.jobTask, workerUid: uid, workerCrewId: a.workerCrewId, workerName: a.workerName,
-      siteCheck: a.siteCheck === true, status: 'open', flagged: flags.length > 0,
+      siteCheck: a.siteCheck === true, status: 'open', flagged: flags.length > 0, settled: false,
       inAt: now, inServerAt: firebase.firestore.FieldValue.serverTimestamp(), inFlags: flags,
     };
     if (a.projectId) s.projectId = a.projectId;
@@ -216,12 +230,13 @@ function clkBannerHtml() {
   const s = clkOpenSession();
   if (!s) return '';
   const ms = clkSessionMs(s, Date.now());
-  const long = ms > CLK_MAX_OPEN_H * 3600000;
+  const maxH = clkCfg().maxHours;
+  const long = ms > maxH * 3600000;
   return `<div class="card-item" style="margin:14px 0;border-left:3px solid ${long ? 'var(--red)' : 'var(--green)'}">
     <div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:${long ? 'var(--red)' : 'var(--green)'}">● CLOCKED IN</div>
     <div style="font-size:15px;font-weight:600;margin-top:4px">${wkEsc(s.jobTask)}</div>
     <div style="font-size:12px;color:var(--text2);margin-top:2px">Since ${wkEsc(clkFmtTime(s.inAt))} · ${wkEsc(clkFmtDuration(ms))}</div>
-    ${long ? `<div style="font-size:12px;color:var(--red);margin-top:6px">You have been clocked in for over ${CLK_MAX_OPEN_H} hours. Clock out now. The owner will check this session.</div>` : ''}
+    ${long ? `<div style="font-size:12px;color:var(--red);margin-top:6px">You have been clocked in for over ${maxH} hours. Clock out now. The owner will check this session.</div>` : ''}
     ${(s.inFlags || []).length ? '<div style="font-size:11px;color:var(--text3);margin-top:6px">Your clock-in will be checked by the owner.</div>' : ''}
     <div style="margin-top:10px"><button class="topbar-btn" onclick="clkOut()">CLOCK OUT</button></div></div>`;
 }
@@ -239,16 +254,25 @@ function clkCardAction(a) {
     <div style="font-size:11px;color:var(--text3);margin-top:6px">${note}</div></div>`;
 }
 
+// What the owner decided, in the worker's words. Adjusted sessions show the corrected times.
+function clkReviewTag(s) {
+  const t = (txt, col) => `<div style="font-size:10px;color:${col};margin-top:2px">${txt}</div>`;
+  if (s.reviewStatus === 'approved') return t('Checked, counted', 'var(--green)');
+  if (s.reviewStatus === 'adjusted') return t('Checked, times corrected', 'var(--green)');
+  if (s.reviewStatus === 'declined') return t('Checked, not counted', 'var(--red)');
+  return s.flagged ? t('Owner will check', 'var(--accent)') : '';
+}
+
 // The worker's own recent sessions, so they can see what they have done.
 function clkHoursHtml() {
   const list = clkMine.slice().sort((a, b) => String(b.inAt).localeCompare(String(a.inAt))).slice(0, 10);
   if (!list.length) return '';
   const now = Date.now();
   const rows = list.map(s => {
-    const range = s.status === 'closed' ? `${clkFmtTime(s.inAt)}–${clkFmtTime(s.outAt)}` : `${clkFmtTime(s.inAt)}–now`;
+    const range = s.status === 'closed' ? `${clkFmtTime(s.adjInAt || s.inAt)}–${clkFmtTime(s.adjOutAt || s.outAt)}` : `${clkFmtTime(s.inAt)}–now`;
     return `<div style="display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px">
       <div><div>${wkEsc(clkFmtDay(s.inAt))} · ${wkEsc(range)}</div><div style="color:var(--text3);margin-top:2px">${wkEsc(s.jobTask)}</div></div>
-      <div style="text-align:right;white-space:nowrap">${wkEsc(clkFmtDuration(clkSessionMs(s, now)))}${s.flagged ? '<div style="font-size:10px;color:var(--accent);margin-top:2px">Owner will check</div>' : ''}</div></div>`;
+      <div style="text-align:right;white-space:nowrap">${wkEsc(clkFmtDuration(clkSessionMs(s, now)))}${clkReviewTag(s)}</div></div>`;
   }).join('');
   return `<div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;margin:24px 0 6px">My recent hours</div>${rows}`;
 }
@@ -260,11 +284,12 @@ function clkOwnerLine(a) {
   if (!list.length) return '';
   const open = list.find(s => s.status === 'open');
   const now = Date.now();
-  const closedMs = list.filter(s => s.status === 'closed').reduce((t, s) => t + clkSessionMs(s, now), 0);
-  const flagged = list.filter(s => s.flagged).length;
+  const counted = list.filter(s => s.status === 'closed' && s.reviewStatus !== 'declined');
+  const closedMs = counted.reduce((t, s) => t + clkSessionMs(s, now), 0);
+  const flagged = list.filter(s => s.flagged && !s.reviewStatus).length;
   const parts = [];
   if (open) parts.push(`<span style="color:var(--green)">● on the clock since ${wkEsc(clkFmtTime(open.inAt))} (${wkEsc(clkFmtDuration(clkSessionMs(open, now)))})</span>`);
-  if (closedMs > 0 || list.some(s => s.status === 'closed')) parts.push(`${wkEsc(clkFmtDuration(closedMs))} worked`);
+  if (closedMs > 0 || counted.length) parts.push(`${wkEsc(clkFmtDuration(closedMs))} worked`);
   if (flagged) parts.push(`<span style="color:var(--accent)">⚠ ${flagged} to check</span>`);
   return `<div style="font-size:11px;color:var(--text3);margin-top:4px">${parts.join(' · ')}</div>`;
 }
@@ -274,6 +299,7 @@ function clkOnSiteCount(ticket) {
 
 // ── Live data ───────────────────────────────────────────────────────────────────
 function clkRedraw() {
+  if (typeof revRefresh === 'function') revRefresh();
   if (currentPage === 'myjobs' && typeof renderMyJobs === 'function') renderMyJobs();
   if (currentPage === 'jobs' && typeof renderPage === 'function') renderPage('jobs');
   if (typeof asgRefreshTicketWorkers === 'function') asgRefreshTicketWorkers();
@@ -286,11 +312,20 @@ function clkEnsureTicker() {
 function clkStopTicker() { if (clkTicker) { window.clearInterval(clkTicker); clkTicker = null; } }
 function clkStopSync() {
   clkUnsubs.forEach(u => { try { u(); } catch (e) { /* already closed */ } });
-  clkUnsubs = []; clkMine = []; clkAll = []; clkRecent = []; clkOpenAll = []; clkMineReady = false; clkStarted = null; clkBusy = false;
+  clkUnsubs = []; clkMine = []; clkAll = []; clkRecent = []; clkOpenAll = []; clkUnsettled = []; clkMineReady = false; clkStarted = null; clkBusy = false;
+  clkSettings = { ...CLK_DEFAULTS };
   clkStopTicker();
 }
 const clkDocs = qs => qs.docs.map(d => Object.assign({ id: d.id }, d.data()));
 function clkDiag(err) { if (typeof syncDiagError === 'function') syncDiagError(CLK_COLL, err); }
+
+// The shared limits (3 km, 500 m, 14 h, 5 min by default). Everyone signed in reads them.
+function clkStartSettingsSync() {
+  clkUnsubs.push(db.collection('settings').doc(CLK_SETTINGS_DOC).onSnapshot(d => {
+    clkSettings = d.exists ? Object.assign({}, CLK_DEFAULTS, d.data()) : { ...CLK_DEFAULTS };
+    clkRedraw();
+  }, clkDiag));
+}
 
 // A person listens to ONLY their own sessions; the rules refuse anything wider.
 function clkStartWorkerSync() {
@@ -298,23 +333,28 @@ function clkStartWorkerSync() {
   clkStopSync(); clkStarted = 'worker';
   const uid = clkOwnUid();
   if (!uid) return;
+  clkStartSettingsSync();
   clkUnsubs.push(db.collection(CLK_COLL).where('workerUid', '==', uid).onSnapshot(qs => {
     clkMine = clkDocs(qs); clkMineReady = true; clkEnsureTicker(); clkRedraw();
   }, err => { clkDiag(err); }));
 }
-// Owners: the last 14 days plus every session still open (a stuck one may be older than that).
+// Owners: the last 35 days (Time Tracking's recent weeks), every session still open, and every session not yet paid or declined (an unpaid or
+// unreviewed one may be older than 14 days). Sessions made before the "settled" field existed are covered by
+// the first two.
 function clkStartOwnerSync() {
   if (clkStarted === 'owner') return;
   clkStopSync(); clkStarted = 'owner';
+  clkStartSettingsSync();
   const merge = () => {
     const byId = new Map();
-    clkRecent.concat(clkOpenAll).forEach(s => byId.set(s.id, s));
+    clkRecent.concat(clkOpenAll, clkUnsettled).forEach(s => byId.set(s.id, s));
     clkAll = [...byId.values()];
     const me = clkOwnUid();
     clkMine = clkAll.filter(s => s.workerUid === me);
     clkMineReady = true; clkEnsureTicker(); clkRedraw();
   };
-  const cutoff = new Date(Date.now() - 14 * 86400000).toISOString();
+  const cutoff = new Date(Date.now() - 35 * 86400000).toISOString();
   clkUnsubs.push(db.collection(CLK_COLL).where('inAt', '>=', cutoff).onSnapshot(qs => { clkRecent = clkDocs(qs); merge(); }, clkDiag));
   clkUnsubs.push(db.collection(CLK_COLL).where('status', '==', 'open').onSnapshot(qs => { clkOpenAll = clkDocs(qs); merge(); }, clkDiag));
+  clkUnsubs.push(db.collection(CLK_COLL).where('settled', '==', false).onSnapshot(qs => { clkUnsettled = clkDocs(qs); merge(); }, clkDiag));
 }

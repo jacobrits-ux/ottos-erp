@@ -171,6 +171,7 @@ function applyRoleToUi() {
   });
   rlEnsureUsersNav();
   if (window.wkApplyRole) wkApplyRole();   // worker.js: My Jobs entry, hides what a worker cannot use
+  if (window.revApplyRole) revApplyRole(); // review.js: Action Items entry for owners
 }
 function rlEnsureUsersNav() {
   let el = document.getElementById('nav-users');

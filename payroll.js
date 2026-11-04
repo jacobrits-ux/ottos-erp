@@ -112,14 +112,30 @@ function daysBetweenInclusive(startStr, endStr) {
   return Math.round((end - start) / 86400000) + 1;
 }
 
+// Session ids already held by a finalised (not voided) run: worker-app sessions are never paid twice.
+function payrollPaidSessionIds() {
+  return new Set(payrollRuns.filter(r => r.status !== 'voided').flatMap(r => (r.payslips || []).flatMap(p => p.timeSessionIds || [])));
+}
+
 function getCompletedSessionsInPeriod(periodStart, periodEnd) {
   const start = new Date(periodStart + 'T00:00:00');
   const end = new Date(periodEnd + 'T23:59:59');
-  return (store.timeSessions || []).filter(s => {
+  const own = (store.timeSessions || []).filter(s => {
     if (!s.clockOut) return false; // only completed sessions have a duration
     const ci = new Date(s.clockIn);
     return ci >= start && ci <= end;
   });
+  // Worker-app sessions (review.js): approved, or with nothing to question, dated on or before the period's end
+  // and not already in a finalised run. Those dated before the period's start are carried hours (_carried).
+  return window.payableWorkSessions ? own.concat(payableWorkSessions(periodStart, periodEnd, payrollPaidSessionIds())) : own;
+}
+
+// "incl. 3h 20m from 12 Oct" under a payslip's hours when approved hours from an earlier week were carried in.
+function payrollCarriedNote(p) {
+  if (!p || !p.carriedMinutes) return '';
+  const m = p.carriedMinutes, d = new Date(p.carriedFrom + 'T00:00:00');
+  const when = Number.isNaN(d.getTime()) ? '' : ` from ${d.getDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()]}`;
+  return `<br><span style="color:var(--text3)">incl. ${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m${when} (carried)</span>`;
 }
 
 function calcWorkerHoursInPeriod(workerName, sessions) {
@@ -170,6 +186,8 @@ function calcPAYE(grossPay, periodDays, settings) {
 
 function buildPayslip(crewMember, periodStart, periodEnd, sessions, settings) {
   const { hoursWorked, sessionIds } = calcWorkerHoursInPeriod(crewMember.name, sessions);
+  const carried = sessions.filter(s => s.worker === crewMember.name && s._carried);
+  const carriedMinutes = carried.reduce((t, s) => t + (s.duration || 0), 0);
   const periodDays = daysBetweenInclusive(periodStart, periodEnd);
   const grossPay = calcGrossPay(hoursWorked, crewMember.rate, settings.standardHoursPerDay);
   const uifEnrolled = crewMember.uifEnrolled !== false; // default true — UIF applies to virtually all employees by law
@@ -191,6 +209,7 @@ function buildPayslip(crewMember, periodStart, periodEnd, sessions, settings) {
     totalDeductions,
     netPay: Math.round((grossPay - totalDeductions) * 100) / 100,
     timeSessionIds: sessionIds,
+    ...(carriedMinutes ? { carriedMinutes, carriedFrom: carried.map(s => s.clockIn).sort()[0].slice(0, 10) } : {}),
     manualEntry: false,
     paid: false, paidDate: null, paymentMethod: null, expenseId: null,
   };
@@ -274,6 +293,8 @@ function generatePayrollDraftFromModal() {
   const end = (document.getElementById('f-pr-end') || {}).value;
   if (!start || !end) { alert('Both dates are required'); return; }
   if (new Date(end) < new Date(start)) { alert('Period end must be on or after period start'); return; }
+  const pending = window.revPending ? revPending(end) : { count: 0, minutes: 0 };
+  if (pending.count && !confirm(`${pending.count} worker-app session${pending.count === 1 ? ' is' : 's are'} still waiting for your review (${Math.floor(pending.minutes / 60)}h ${String(pending.minutes % 60).padStart(2, '0')}m) and will NOT be in this run. Once reviewed they join the next run. Continue?`)) return;
   const overlap = findOverlappingPayrollRun(start, end, null);
   if (overlap && !confirm(`This overlaps existing run ${overlap.id} (${overlap.periodStart} → ${overlap.periodEnd}, ${overlap.status}). Continue anyway?`)) return;
   const draft = buildPayrollRunDraft(start, end);
@@ -378,6 +399,7 @@ function finalizePayrollRun() {
   payrollDraft.notes = (document.getElementById('pr-notes') || {}).value || '';
   const run = payrollDraft;
   savePayrollRun(run);
+  if (window.revSettle) revSettle(run);   // mark worker-app sessions in this run as paid
   store.activity.unshift({ text: `Payroll run finalized — ${run.id} — ${run.payslips.length} worker(s), ${fmt(run.totals.netPay)} net`, time: 'Just now', type: 'green' });
   save();
   payrollDraft = null;
@@ -425,6 +447,7 @@ function confirmVoidPayrollRun(runId) {
   run.voidedAt = new Date().toISOString();
   run.voidReason = reason;
   savePayrollRun(run);
+  if (window.revUnsettle) revUnsettle(run);   // their worker-app sessions become payable again
   store.activity.unshift({ text: `Payroll run ${run.id} voided — ${reason}`, time: 'Just now', type: 'red' });
   save();
   updatePayrollBadge();
@@ -569,7 +592,7 @@ function buildPayslipHTML(run, payslip) {
     </div>
     <div class="bill-to">
       <div class="bill-label">Hours / Days This Period</div>
-      <div class="bill-name">${p.hoursWorked}h / ${p.daysWorked}d${p.manualEntry ? ' (manual entry)' : ''}</div>
+      <div class="bill-name">${p.hoursWorked}h / ${p.daysWorked}d${p.manualEntry ? ' (manual entry)' : ''}${payrollCarriedNote(p)}</div>
       <div class="bill-detail">UIF: ${p.uifEnrolled ? 'Enrolled' : 'Not enrolled'} &nbsp;·&nbsp; PAYE: ${p.payeEnrolled ? 'Enrolled' : 'Not enrolled'}</div>
     </div>
   </div>
@@ -830,7 +853,7 @@ function renderPayrollDraftReview() {
   const rows = payrollDraft.payslips.map((p, idx) => `
     <tr>
       <td><strong>${p.worker}</strong><br><span class="mono" style="color:var(--text3);font-size:9px">${p.role}</span></td>
-      <td class="mono">${p.daysWorked}d / ${p.hoursWorked}h${p.manualEntry ? '<br><span style="color:var(--text3)">(manual)</span>' : ''}</td>
+      <td class="mono">${p.daysWorked}d / ${p.hoursWorked}h${p.manualEntry ? '<br><span style="color:var(--text3)">(manual)</span>' : ''}${payrollCarriedNote(p)}</td>
       <td><input type="number" value="${p.grossPay}" step="0.01" style="width:80px;font-family:var(--fm);" onchange="payrollDraftFieldChange(${idx},'grossPay',this.value)"></td>
       <td>${p.uifEnrolled ? `<input type="number" value="${p.uifEmployee}" step="0.01" style="width:70px;font-family:var(--fm);" onchange="payrollDraftFieldChange(${idx},'uifEmployee',this.value)">` : '<span style="color:var(--text3)">—</span>'}</td>
       <td>${p.payeEnrolled ? `<input type="number" value="${p.payeAmount}" step="0.01" style="width:70px;font-family:var(--fm);" onchange="payrollDraftFieldChange(${idx},'payeAmount',this.value)">` : '<span style="color:var(--text3)">—</span>'}</td>
@@ -996,7 +1019,7 @@ function renderPayrollRunDetail(runId) {
   const rowsHtml = run.payslips.map((p, idx) => `
     <tr>
       <td><strong>${p.worker}</strong><br><span class="mono" style="color:var(--text3);font-size:9px">${p.role}</span></td>
-      <td class="mono">${p.daysWorked}d / ${p.hoursWorked}h${p.manualEntry ? '<br><span style="color:var(--text3)">(manual)</span>' : ''}</td>
+      <td class="mono">${p.daysWorked}d / ${p.hoursWorked}h${p.manualEntry ? '<br><span style="color:var(--text3)">(manual)</span>' : ''}${payrollCarriedNote(p)}</td>
       <td style="font-family:var(--fm);color:var(--accent)">${fmt(p.grossPay)}</td>
       <td style="font-family:var(--fm);color:var(--red)">${p.uifEnrolled ? fmt(p.uifEmployee) : '—'}</td>
       <td style="font-family:var(--fm);color:var(--red)">${p.payeEnrolled ? fmt(p.payeAmount) : '—'}</td>
