@@ -238,7 +238,7 @@ function clkBannerHtml() {
     <div style="font-size:12px;color:var(--text2);margin-top:2px">Since ${wkEsc(clkFmtTime(s.inAt))} · ${wkEsc(clkFmtDuration(ms))}</div>
     ${long ? `<div style="font-size:12px;color:var(--red);margin-top:6px">You have been clocked in for over ${maxH} hours. Clock out now. The owner will check this session.</div>` : ''}
     ${(s.inFlags || []).length ? '<div style="font-size:11px;color:var(--text3);margin-top:6px">Your clock-in will be checked by the owner.</div>' : ''}
-    <div style="margin-top:10px"><button class="topbar-btn" onclick="clkOut()">CLOCK OUT</button></div></div>`;
+    <div style="margin-top:10px">${clkDeviceOk() ? '<button class="topbar-btn" onclick="clkOut()">CLOCK OUT</button>' : '<div style="font-size:12px;color:var(--text3)">Clock out from your phone or tablet.</div>'}</div></div>`;
 }
 
 // What an ACCEPTED job card shows in place of a button-less line.

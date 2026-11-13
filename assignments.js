@@ -196,7 +196,7 @@ async function showSendToWorkers(i) {
 
   const rows = people.length ? people.map(p => {
     const a = have.get(p.uid);
-    return `<label style="display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);${a ? 'opacity:.55' : ''}">
+    return `<label style="display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);text-transform:none;letter-spacing:0;font-size:14px;color:var(--text);${a ? 'opacity:.55' : ''}">
       <input type="checkbox" name="asg-person" value="${wkEsc(p.uid)}" ${a ? 'disabled' : ''}>
       <span style="flex:1">${wkEsc(p.name)} <span style="font-size:10px;color:var(--text3)">${p.role === 'owner' ? 'owner' : 'worker'}</span></span>
       ${a ? `<span style="font-size:10px;color:var(--text3)">${wkEsc(asgStatusText(a))}</span>` : ''}</label>`;

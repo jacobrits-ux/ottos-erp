@@ -59,7 +59,7 @@ function revReasons(s, ctx) {
   const point = (lat, lng, acc, when) => {
     if (typeof lat !== 'number' || typeof lng !== 'number') { out.push({ code: 'noLocation', text: `No location when ${when}` }); return; }
     const d = clkDistanceM({ lat, lng }, site);
-    if (d > cfg.radiusM) out.push({ code: 'far', text: `${when[0].toUpperCase()}${when.slice(1)} ${revFmtDist(d)} from the site` });
+    if (d > cfg.radiusM) out.push({ code: 'far', text: `${when === 'clocking in' ? 'Clocked in' : 'Clocked out'} ${revFmtDist(d)} from the site` });
     if (!(acc <= cfg.accuracyM)) out.push({ code: 'poorAccuracy', text: `Location when ${when} was only accurate to ${Number.isFinite(acc) ? '±' + Math.round(acc) + ' m' : 'an unknown distance'}` });
   };
   if (site) {
