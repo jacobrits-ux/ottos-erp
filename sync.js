@@ -54,7 +54,8 @@ function initFirebase() {
             // rules (and show OFFLINE), so they never start for a worker.
             // Workers listen only to their own assignments (assignments.js); owners get the store listeners
             // plus the live assignments list.
-            if (currentProfile && currentProfile.role === 'worker') {
+            // (A supervisor is a cell-number login too: same own-documents-only listeners for now.)
+            if (currentProfile && (currentProfile.role === 'worker' || currentProfile.role === 'supervisor')) {
               if (window.asgStartWorkerSync) { asgStartWorkerSync(); if (window.clkStartWorkerSync) clkStartWorkerSync(); } else updateSyncIndicator('not-configured');
             } else {
               setupFirestoreListeners();

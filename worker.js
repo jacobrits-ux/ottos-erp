@@ -5,9 +5,13 @@
 // (renderPage routes 'myjobs' to window.renderMyJobs); roles.js and sync.js call in
 // through window-guarded hooks (wkApplyRole, wkSignIn).
 //
+// SUPERVISOR (Round 1, Nov 2026): a supervisor is the SAME kind of login as a worker (cell number, crew
+// link, own jobs and clock); only the role word differs. Their powers over other people's jobs come in later
+// rounds and live in the rules. Wherever this file says 'cell login' it means worker OR supervisor.
+//
 // THE SECURITY BOUNDARY IS THE FIRESTORE RULES, NOT THIS FILE. A worker profile
-// (role 'worker') is granted nothing by the rules except reading its own users/{uid}
-// document; the menu hiding here is convenience for honest users.
+// (role 'worker') is granted nothing by the rules except its own profile, jobs and clock; the menu hiding
+// here is convenience for honest users.
 //
 // HOW A WORKER SIGNS IN. Firebase Auth needs an email-shaped identifier, so a worker's
 // login is derived from the cell number on their Crew record:
@@ -66,7 +70,7 @@ function wkParseLoginEmail(email) {
 }
 // What the Users screen shows instead of the made-up address.
 function wkDisplayId(u) {
-  if (!u || u.role !== 'worker') return u && u.email;
+  if (!u || !wkIsCellRole(u.role)) return u && u.email;
   const p = wkParseLoginEmail(u.email);
   if (!p) return u.email;
   return `Cell ${wkFmtCell(p.cell)}${p.attempt > 1 ? ` · login ${p.attempt}` : ''}`;
@@ -108,15 +112,19 @@ async function wkSignIn(raw, password, errEl) {
 }
 
 // ── Applying the worker role to the UI (convenience only; the rules are the boundary) ──
+// The two cell-number roles. (roles.js has the same one-liner as rlIsCell so each file stands alone in tests.)
+function wkIsCellRole(role) { return role === 'worker' || role === 'supervisor'; }
 function wkIsWorker() { return !!(currentProfile && currentProfile.role === 'worker'); }
+// Worker OR supervisor: the logins that get the cut-down My Jobs shell instead of the owner's menu.
+function wkIsFieldLogin() { return !!(currentProfile && wkIsCellRole(currentProfile.role)); }
 // An owner who also does jobs has their profile linked to their crew record and gets My Jobs too.
 function wkHasMyJobs() {
   return !!(currentProfile && currentProfile.active === true &&
-    (currentProfile.role === 'worker' || (currentProfile.role === 'owner' && currentProfile.crewId)));
+    (wkIsCellRole(currentProfile.role) || (currentProfile.role === 'owner' && currentProfile.crewId)));
 }
 
 function wkApplyRole() {
-  const worker = wkIsWorker();
+  const worker = wkIsFieldLogin();
   const hasPage = wkHasMyJobs();
   const navEl = document.getElementById('nav-myjobs');
   const bnavEl = document.getElementById('bnav-myjobs');
@@ -184,10 +192,10 @@ function renderMyJobs() {
     root.innerHTML = '<div style="padding:24px;color:var(--text3);font-size:13px;line-height:1.6;max-width:520px">This page shows the jobs sent to you. Owners get it once the platform admin links their login to their crew record (Users screen).</div>';
     return;
   }
-  const worker = wkIsWorker();
+  const worker = wkIsFieldLogin();
   const p = wkParseLoginEmail(currentProfile.email);
   const who = worker
-    ? (p ? `Signed in with cell number ${wkEsc(wkFmtCell(p.cell))}` : `Signed in as ${wkEsc(currentProfile.email)}`)
+    ? (p ? `Signed in with cell number ${wkEsc(wkFmtCell(p.cell))}` : `Signed in as ${wkEsc(currentProfile.email)}`) + (currentProfile.role === 'supervisor' ? ' · Supervisor' : '')
     : 'Jobs sent to you as a crew member';
   const jobs = window.asgMyJobsHtml ? asgMyJobsHtml() : '';
   root.innerHTML = `<div style="padding:24px;max-width:560px">
@@ -210,7 +218,7 @@ function wkCrewKey(c) {
 
 // Which crew members can be given a login right now, and which login number each gets.
 function wkCrewChoices() {
-  const logins = (typeof rlUsers !== 'undefined' ? rlUsers : []).filter(u => u.role === 'worker');
+  const logins = (typeof rlUsers !== 'undefined' ? rlUsers : []).filter(u => wkIsCellRole(u.role));
   const out = { ok: [], noPhone: [], noId: [], hasLogin: [], clash: [], full: [] };
   (store.crew || []).forEach(c => {
     const key = wkCrewKey(c);
@@ -252,8 +260,9 @@ function showAddWorker() {
     const options = ch.ok.map(x => `<option value="${wkEsc(x.key)}">${wkEsc(x.crew.name)} · ${wkEsc(wkFmtCell(x.cell))}${x.attempt > 1 ? ` · login ${x.attempt}` : ''}</option>`).join('');
     openModal('ADD WORKER LOGIN', `<div class="form-grid">
       <div class="form-group full"><label>Crew member (their cell number is their login)</label><select id="f-wk-crew">${options}</select></div>
+      <div class="form-group full"><label>Role</label><select id="f-wk-role"><option value="worker" selected>Worker</option><option value="supervisor">Supervisor</option></select></div>
       <div class="form-group full"><label>Starting password</label><input type="text" id="f-wk-pass" placeholder="At least 8 characters" autocomplete="off"></div>
-      <div class="form-group full" style="font-size:11px;color:var(--text3);line-height:1.5">The worker signs in with their cell number and this password. Give it to them in person or by phone, not in a group chat. A worker only ever sees their own jobs and clock.${notes}</div>
+      <div class="form-group full" style="font-size:11px;color:var(--text3);line-height:1.5">They sign in with their cell number and this password. Give it to them in person or by phone, not in a group chat. They see only their own jobs and clock (a supervisor will also review their crew's hours in a later update; never pay, payslips or banking).${notes}</div>
     </div><div class="form-actions">
       <button class="topbar-btn" onclick="saveNewWorker()">ADD WORKER LOGIN</button>
       <button class="topbar-btn secondary" onclick="closeModalDirect()">CANCEL</button></div>`);
@@ -263,7 +272,8 @@ function showAddWorker() {
 async function saveNewWorker() {
   if (!can('users')) return;
   const v = id => (document.getElementById(id) || {}).value || '';
-  const crewId = v('f-wk-crew'), pass = v('f-wk-pass');
+  const crewId = v('f-wk-crew'), pass = v('f-wk-pass'), role = v('f-wk-role') || 'worker';
+  if (!wkIsCellRole(role)) { alert('Choose Worker or Supervisor'); return; }
   if (pass.length < 8) { alert('The starting password must be at least 8 characters'); return; }
   // Decided again from fresh data, never from what the form says, so a stale form cannot
   // create a second active login for someone.
@@ -286,13 +296,32 @@ async function saveNewWorker() {
     if (!uid) { alert(`All ${WK_MAX_LOGINS} logins for this cell number are taken. Ask the platform admin to clear unused ones in the Firebase Console.`); return; }
   }
   try {
-    await rlWriteProfile(uid, pick.crew.name, email, 'worker', pick.key);
+    await rlWriteProfile(uid, pick.crew.name, email, role, pick.key);
     wkLastCreated = null;
     closeModalDirect();
-    toast('Worker login added');
+    toast(role === 'supervisor' ? 'Supervisor login added' : 'Worker login added');
     renderUsers();
   } catch (err) {
     wkLastCreated = { crewId, email, uid };
     alert('Their login was created but the access record could not be saved (' + (err && (err.code || err.message)) + '). Press ADD WORKER LOGIN again to retry.');
   }
+}
+
+// ── Switch a cell login between Worker and Supervisor (owners, Users screen) ────────────────────
+// Mirrors the rules: an owner may change the role of OTHER users, and a cell login may only move between the
+// two cell roles (never to or from owner). The crew link and the login stay as they are.
+function wkRoleButton(u, locked) {
+  if (!can('users') || locked || !u || !wkIsCellRole(u.role) || u.active !== true) return '';
+  const to = u.role === 'worker' ? 'supervisor' : 'worker';
+  return ` <button class="action-btn" onclick="wkSetCellRole(${rlJs(u.uid)}, ${rlJs(to)})">${to === 'supervisor' ? 'Make supervisor' : 'Make worker'}</button>`;
+}
+
+function wkSetCellRole(uid, role) {
+  const u = typeof rlFind === 'function' ? rlFind(uid) : null;
+  if (!can('users') || !u || !wkIsCellRole(u.role) || !wkIsCellRole(role) || u.role === role || uid === auth_uid() || u.platformAdmin === true) { return; }
+  const label = role === 'supervisor' ? 'Supervisor' : 'Worker';
+  if (!confirm(`Change ${u.name || wkDisplayId(u)} to ${label}?`)) return;
+  db.collection('users').doc(uid).update({ role })
+    .then(() => { toast('Role updated'); renderUsers(); })
+    .catch(err => { alert('Could not change the role (' + ((err && err.code) || (err && err.message)) + ').'); renderUsers(); });
 }

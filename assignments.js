@@ -96,7 +96,7 @@ function asgPeople() {
   const crew = store.crew || [];
   const people = [], unlinked = [];
   users.forEach(u => {
-    if (u.active !== true || (u.role !== 'worker' && u.role !== 'owner')) return;
+    if (u.active !== true || (u.role !== 'worker' && u.role !== 'supervisor' && u.role !== 'owner')) return;
     const key = u.crewId == null ? '' : String(u.crewId);
     if (!key) { if (u.role === 'owner') unlinked.push(u); return; }
     const c = crew.find(x => wkCrewKey(x) === key);
@@ -198,7 +198,7 @@ async function showSendToWorkers(i) {
     const a = have.get(p.uid);
     return `<label style="display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);text-transform:none;letter-spacing:0;font-size:14px;color:var(--text);${a ? 'opacity:.55' : ''}">
       <input type="checkbox" name="asg-person" value="${wkEsc(p.uid)}" ${a ? 'disabled' : ''}>
-      <span style="flex:1">${wkEsc(p.name)} <span style="font-size:10px;color:var(--text3)">${p.role === 'owner' ? 'owner' : 'worker'}</span></span>
+      <span style="flex:1">${wkEsc(p.name)} <span style="font-size:10px;color:var(--text3)">${p.role === 'owner' ? 'owner' : p.role === 'supervisor' ? 'supervisor' : 'worker'}</span></span>
       ${a ? `<span style="font-size:10px;color:var(--text3)">${wkEsc(asgStatusText(a))}</span>` : ''}</label>`;
   }).join('') : '<div style="padding:8px 0;color:var(--text3);font-size:12px">Nobody can receive jobs yet. Add worker logins on the Users screen.</div>';
   const hint = unlinked.length
@@ -526,18 +526,18 @@ function asgStartOwnerSync() {
 
 // ── Users screen: link an owner login to their crew record (platform admin only) ──
 function asgLinkSuffix(u) {
-  if (!u || u.role === 'worker' || u.crewId == null || u.crewId === '') return '';
+  if (!u || rlIsCell(u.role) || u.crewId == null || u.crewId === '') return '';
   const c = (store.crew || []).find(x => wkCrewKey(x) === String(u.crewId));
   return ` · Crew: ${c ? c.name : 'record ' + u.crewId}`;
 }
 function asgLinkButton(u) {
-  if (!currentProfile || currentProfile.platformAdmin !== true || u.role === 'worker' || u.active !== true) return '';
+  if (!currentProfile || currentProfile.platformAdmin !== true || rlIsCell(u.role) || u.active !== true) return '';
   return `<button class="action-btn" onclick="showLinkCrew(${rlJs(u.uid)})">${u.crewId ? 'Change crew link' : 'Link crew record'}</button>`;
 }
 function showLinkCrew(uid) {
   if (!currentProfile || currentProfile.platformAdmin !== true) { toast('Only the platform admin can link crew records'); return; }
   const u = rlUsers.find(x => x.uid === uid);
-  if (!u || u.role === 'worker') return;
+  if (!u || rlIsCell(u.role)) return;
   const linked = new Set(rlUsers.filter(x => x.uid !== uid && x.active === true && x.crewId != null && x.crewId !== '').map(x => String(x.crewId)));
   const options = (store.crew || []).map(c => ({ c, key: wkCrewKey(c) })).filter(x => x.key && !linked.has(x.key))
     .map(x => `<option value="${wkEsc(x.key)}" ${String(u.crewId) === x.key ? 'selected' : ''}>${wkEsc(x.c.name)}${x.c.role ? ' · ' + wkEsc(x.c.role) : ''}</option>`).join('');
@@ -551,7 +551,7 @@ async function asgSaveLink(uid) {
   const u = rlUsers.find(x => x.uid === uid);
   const key = (document.getElementById('f-asg-link') || {}).value || '';
   const crew = (store.crew || []).find(c => wkCrewKey(c) === key);
-  if (!u || u.role === 'worker' || !crew) { alert('Choose a crew record'); return; }
+  if (!u || rlIsCell(u.role) || !crew) { alert('Choose a crew record'); return; }
   const clash = rlUsers.find(x => x.uid !== uid && x.active === true && String(x.crewId) === key);
   if (clash) { alert(`${crew.name} is already linked to ${clash.name || clash.email}.`); return; }
   try {

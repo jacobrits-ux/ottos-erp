@@ -13,10 +13,11 @@
 //
 // DATA — one document per login at users/{uid}:
 //   { email, name, role, tenantId, platformAdmin, active, createdAt, createdBy, crewId? }
-// - crewId: worker logins only; the id of their Crew record (worker.js).
+// - crewId: worker and supervisor logins; the id of their Crew record (worker.js).
 // - role: 'owner' | 'supervisor' | 'worker'. Owner has every permission; worker only 'myjobs'
-//   (worker.js). Supervisor is declared but not `ready`: it grants nothing (deny by default)
-//   and cannot be assigned until its access is designed.
+//   (worker.js). Supervisor (Round 1, Nov 2026): a cell-number login like a worker, with its own jobs and
+//   clock; the crew-hours review page and the supervisor's powers over OTHER people's jobs arrive in
+//   rounds 2 and 3 and are enforced by the rules, never by this file.
 // - tenantId: 'ottos' today. Carried from day one so the multi-tenant data model
 //   (matrix item 12) doesn't force a rewrite of every rule.
 // - platformAdmin: the platform operator (Jaco). NOT a company role; it sits
@@ -40,9 +41,10 @@ const DEFAULT_TENANT = 'ottos';
 // syncsetup, aisetup.
 const ROLES = {
   owner:      { label: 'Owner',      perms: '*', ready: true },
-  supervisor: { label: 'Supervisor', perms: [],  ready: false },
-  // A worker sees only their own jobs and clock. viaUsers:false = never offered in the Add user / role
-  // dropdowns: a worker login needs a crew link and a cell-number login, so it is made in worker.js.
+  // A supervisor and a worker both need a crew link and a cell-number login, so neither is offered in the
+  // Add user / role dropdowns: both are made in worker.js (Add worker login). Round 1 grants a supervisor
+  // exactly what a worker has; the review powers are added by later rounds, rules first.
+  supervisor: { label: 'Supervisor', perms: ['myjobs'], ready: true, viaUsers: false },
   worker:     { label: 'Worker',     perms: ['myjobs'], ready: true, viaUsers: false },
 };
 
@@ -65,6 +67,9 @@ function rlEsc(v) {
 // A value inside an inline onclick="…": JSON-quote it as a JS string, THEN HTML-escape
 // (the browser decodes entities before running the JS, so escaping alone is unsafe).
 function rlJs(v) { return rlEsc(JSON.stringify(String(v == null ? '' : v))); }
+
+// Worker and supervisor logins are the two cell-number roles (same login, same crew link).
+function rlIsCell(role) { return role === 'worker' || role === 'supervisor'; }
 
 function can(perm) {
   if (!rolesEnforced) return true;
@@ -243,14 +248,15 @@ function rlUsersHtml(list) {
       name: rlEsc(u.name),
       email: rlEsc(rlShownId(u)),
       tags: (isMe ? ' <span class="badge badge-blue">You</span>' : '') + (u.platformAdmin ? ' <span class="badge badge-yellow">Platform admin</span>' : ''),
-      role: locked || u.role === 'worker'
+      role: locked || rlIsCell(u.role)
         ? rlEsc((ROLES[u.role] || {}).label || u.role)
         : `<select onchange="changeUserRole(${rlJs(u.uid)}, this.value)">${rlReadyRoleOptions(u.role)}</select>`,
       status: u.active === true ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-gray">Inactive</span>',
       actions:
         (rlCanRename(u) ? `<button class="action-btn" onclick="renameUser(${rlJs(u.uid)})">Rename</button> ` : '') +
         (locked ? '' : `<button class="action-btn ${u.active === true ? 'danger' : ''}" onclick="setUserActive(${rlJs(u.uid)}, ${u.active === true ? 'false' : 'true'})">${u.active === true ? 'Deactivate' : 'Activate'}</button> `) +
-        (u.role === 'worker' ? '' : `<button class="action-btn" onclick="resetUserPassword(${rlJs(u.email)})">Reset password</button>`) +
+        (rlIsCell(u.role) ? '' : `<button class="action-btn" onclick="resetUserPassword(${rlJs(u.email)})">Reset password</button>`) +
+        (window.wkRoleButton ? wkRoleButton(u, locked) : '') +
         (window.asgLinkButton ? ' ' + asgLinkButton(u) : ''),
     };
   });
@@ -266,11 +272,11 @@ function rlUsersHtml(list) {
       <div class="card-item-actions">${p.actions}</div>
     </div>`).join('');
   const addWorkerBar = window.showAddWorker
-    ? '<div style="padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="action-btn" onclick="showAddWorker()">+ ADD WORKER LOGIN</button><span style="font-size:11px;color:var(--text3)">Workers sign in with their cell number.</span></div>'
+    ? '<div style="padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="action-btn" onclick="showAddWorker()">+ ADD WORKER LOGIN</button><span style="font-size:11px;color:var(--text3)">Workers and supervisors sign in with their cell number.</span></div>'
     : '';
   return `${addWorkerBar}<div class="table-scroll"><table class="data-table"><thead><tr><th>User</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
     <div class="card-list" style="padding:10px 10px 0">${cards}</div>
-    <div style="padding:10px 14px;font-size:11px;color:var(--text3);line-height:1.6">Owners have full access, including payroll and banking details. The Supervisor role is not available yet. A forgotten worker password means an owner adds a replacement login.</div>`;
+    <div style="padding:10px 14px;font-size:11px;color:var(--text3);line-height:1.6">Owners have full access, including payroll and banking details. A supervisor also does jobs and clocks in like a worker; a login can be switched between Worker and Supervisor. A forgotten worker or supervisor password means an owner adds a replacement login.</div>`;
 }
 function auth_uid() { const u = firebase.auth().currentUser; return u ? u.uid : null; }
 
@@ -278,7 +284,7 @@ function rlFind(uid) { return rlUsers.find(u => u.uid === uid); }
 
 function changeUserRole(uid, role) {
   const u = rlFind(uid);
-  if (!can('users') || !u || !ROLES[role] || !ROLES[role].ready || ROLES[role].viaUsers === false || u.role === 'worker' || u.role === role) { renderUsers(); return; }
+  if (!can('users') || !u || !ROLES[role] || !ROLES[role].ready || ROLES[role].viaUsers === false || rlIsCell(u.role) || u.role === role) { renderUsers(); return; }
   if (!confirm(`Change ${u.name || u.email} to ${ROLES[role].label}?`)) { renderUsers(); return; }
   db.collection('users').doc(uid).update({ role })
     .then(() => { toast('Role updated'); renderUsers(); })
