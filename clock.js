@@ -171,6 +171,7 @@ async function clkIn(assignmentId) {
     };
     if (a.projectId) s.projectId = a.projectId;
     if (a.projectName) s.projectName = a.projectName;
+    if (a.supervisorUid) s.supervisorUid = a.supervisorUid;   // lets the named supervisor see this person's hours (rules check it matches)
     if (site) { s.siteLat = site.lat; s.siteLng = site.lng; }
     if (read.pos) { s.inLat = read.pos.lat; s.inLng = read.pos.lng; s.inAcc = Math.round(read.pos.acc); }
     if (dist != null) s.inDist = dist;

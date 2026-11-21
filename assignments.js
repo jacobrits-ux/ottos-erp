@@ -128,12 +128,13 @@ function asgBuildDocs(ticket, people, o) {
     if (o.siteLabel) d.siteLabel = String(o.siteLabel).slice(0, 300);
     if (o.siteCheck && o.point) { d.siteLat = o.point.lat; d.siteLng = o.point.lng; }
     if (o.note) d.note = String(o.note).slice(0, 500);
+    if (o.supervisor && o.supervisor.uid) { d.supervisorUid = String(o.supervisor.uid).slice(0, 128); d.supervisorName = String(o.supervisor.name || '').slice(0, 120); }
     return d;
   });
 }
 
 function asgStatusText(a) {
-  if (a.status === 'accepted') return a.respondedVia === 'owner' ? 'Accepted (by owner)' : 'Accepted';
+  if (a.status === 'accepted') return a.respondedVia === 'owner' ? 'Accepted (by owner)' : a.respondedVia === 'supervisor' ? 'Accepted (by supervisor)' : 'Accepted';
   if (a.status === 'declined') return 'Declined';
   return 'Waiting';
 }
@@ -209,6 +210,7 @@ async function showSendToWorkers(i) {
   openModal('SEND TO WORKERS', `<div style="font-size:13px;margin-bottom:12px"><strong>${wkEsc(ticket.task)}</strong>${projectName ? ` <span style="color:var(--text3)">· ${wkEsc(projectName)}</span>` : ''}</div>
     <div class="form-grid">
       <div class="form-group full"><label>Who is it for?</label><div>${rows}</div>${hint}</div>
+      ${window.svSendFieldHtml ? svSendFieldHtml(ticket) : ''}
       <div class="form-group full"><label>Site name or address</label><input type="text" id="f-asg-label" value="${wkEsc(site.label)}" maxlength="300"></div>
       <div class="form-group full"><label style="display:flex;gap:8px;align-items:center;text-transform:none"><input type="checkbox" id="f-asg-check" checked onchange="asgToggleCheck()"> Check clock-ins against the site (flag anything over 3 km away)</label></div>
       <div id="asg-site-box" class="form-group full">
@@ -339,6 +341,7 @@ async function asgSendConfirm() {
   const docs = asgBuildDocs(ticket, chosen, {
     siteCheck, point, siteLabel: v('f-asg-label').trim(), note: v('f-asg-note').trim(),
     projectName, now: new Date().toISOString(), by: currentProfile.email,
+    supervisor: window.svPicked ? svPicked() : null,
   });
   const results = await Promise.allSettled(docs.map(d => db.collection(ASG_COLL).doc(asgDocId(d.jobKey, d.workerUid)).set(d)));
   const failed = results.filter(r => r.status === 'rejected');
@@ -360,7 +363,7 @@ async function asgSendConfirm() {
 function asgTicketWorkersHtml(ticket) {
   const list = asgForTicket(ticket).slice().sort((a, b) => String(a.workerName).localeCompare(String(b.workerName)));
   if (!list.length) return '<div style="padding:10px 0;color:var(--text3);font-size:12px">Nobody has this job yet.</div>';
-  return list.map(a => {
+  return (window.svTicketLine ? svTicketLine(ticket) : '') + list.map(a => {
     const id = rlJs(a.id || asgDocId(a.jobKey, a.workerUid));
     const wa = asgWhatsAppUrl(a, location.origin + location.pathname);
     const when = a.respondedAt ? ` · ${wkEsc(asgDate(a.respondedAt))}` : '';
@@ -437,6 +440,7 @@ function asgCardHtml(a) {
       <div style="font-size:15px;font-weight:600">${wkEsc(a.jobTask)}</div>
       <span style="font-family:var(--fm);font-size:10px;color:${asgStatusColor(a)};white-space:nowrap">${wkEsc(asgStatusText(a))}</span></div>
     ${a.projectName ? `<div style="font-size:12px;color:var(--text3);margin-top:2px">${wkEsc(a.projectName)}</div>` : ''}
+    ${a.supervisorName ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">Supervisor: ${wkEsc(a.supervisorName)}</div>` : ''}
     ${a.due ? `<div style="font-family:var(--fm);font-size:11px;color:var(--text2);margin-top:6px">Due ${wkEsc(asgDate(a.due))}</div>` : ''}
     ${site}
     ${a.note ? `<div style="font-size:12px;line-height:1.5;margin-top:8px;padding:8px 10px;background:var(--surface2)">${wkEsc(a.note)}</div>` : ''}
@@ -454,9 +458,9 @@ function asgMyJobsHtml() {
   const waiting = asgMine.filter(a => a.status === 'assigned').sort(byDue);
   const accepted = asgMine.filter(a => a.status === 'accepted').sort(byDue);
   const declined = asgMine.filter(a => a.status === 'declined').sort((a, b) => String(b.respondedAt || '').localeCompare(String(a.respondedAt || ''))).slice(0, 5);
-  if (!waiting.length && !accepted.length && !declined.length) return banner + '<div style="font-size:13px;color:var(--text3);line-height:1.6;margin-top:10px">Nothing is assigned to you right now. When an owner sends you a job it appears here.</div>' + hours;
+  if (!waiting.length && !accepted.length && !declined.length) return banner + '<div style="font-size:13px;color:var(--text3);line-height:1.6;margin-top:10px">Nothing is assigned to you right now. When an owner sends you a job it appears here.</div>' + (window.svCrewHtml ? svCrewHtml() : '') + hours;
   const section = (title, arr) => arr.length ? `<div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;margin:18px 0 8px">${title} (${arr.length})</div>${arr.map(asgCardHtml).join('')}` : '';
-  return banner + section('Waiting for your answer', waiting) + section('Accepted', accepted) + section('Declined', declined) + hours;
+  return banner + section('Waiting for your answer', waiting) + section('Accepted', accepted) + section('Declined', declined) + (window.svCrewHtml ? svCrewHtml() : '') + hours;
 }
 
 async function asgAccept(id) {
@@ -490,6 +494,7 @@ function asgDiag(err) { if (typeof syncDiagError === 'function') syncDiagError(A
 function asgStopSync() {
   asgUnsubs.forEach(u => { try { u(); } catch (e) { /* already closed */ } });
   asgUnsubs = []; asgAll = []; asgMine = []; asgMineReady = false; asgMineError = ''; asgStarted = null;
+  if (window.svStopSync) svStopSync();
 }
 
 // A worker listens to ONLY their own documents; the rules refuse anything wider.
@@ -508,6 +513,7 @@ function asgStartWorkerSync() {
     asgDiag(err); updateSyncIndicator('offline');
     if (currentPage === 'myjobs') renderMyJobs();
   }));
+  if (window.svStartSync) svStartSync();   // supervisors also watch the crew on their jobs (supervisor.js)
 }
 
 function asgStartOwnerSync() {
